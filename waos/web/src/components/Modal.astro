@@ -1,0 +1,50 @@
+---
+export interface Props {
+  id: string;
+  title: string;
+  confirmText?: string;
+  cancelText?: string;
+  variant?: 'danger' | 'warning' | 'default';
+}
+const { id, title, confirmText = 'Confirm', cancelText = 'Cancel', variant = 'default' } = Astro.props;
+const btnColor = variant === 'danger' ? 'bg-waos-danger hover:brightness-110' :
+  variant === 'warning' ? 'bg-waos-warn hover:brightness-110' : 'bg-waos-accent hover:brightness-110';
+---
+
+<div id={id} class="fixed inset-0 z-[100] hidden items-center justify-center bg-black/60 backdrop-blur-sm" data-modal>
+  <div class="bg-waos-surface border border-waos-border rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl animate-fade-in">
+    <h3 class="text-lg font-semibold mb-3">{title}</h3>
+    <div class="text-sm text-waos-muted mb-6">
+      <slot name="body" />
+    </div>
+    <div class="flex gap-3 justify-end">
+      <button class="px-4 py-2 text-sm font-medium rounded-lg border border-waos-border text-waos-muted hover:text-waos-text transition" data-modal-close={id}>{cancelText}</button>
+      <button class="px-4 py-2 text-sm font-medium rounded-lg text-white transition {btnColor}" data-modal-confirm={id}>{confirmText}</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('[data-modal]').forEach(el => {
+    const openers = document.querySelectorAll(`[data-modal-open="${el.id}"]`);
+    const closer = el.querySelector(`[data-modal-close="${el.id}"]`);
+    const confirmBtn = el.querySelector(`[data-modal-confirm="${el.id}"]`);
+
+    openers.forEach(btn => btn.addEventListener('click', () => {
+      el.classList.remove('hidden');
+      el.classList.add('flex');
+    }));
+
+    closer?.addEventListener('click', () => {
+      el.classList.add('hidden');
+      el.classList.remove('flex');
+    });
+
+    el.addEventListener('click', (e) => {
+      if (e.target === el) {
+        el.classList.add('hidden');
+        el.classList.remove('flex');
+      }
+    });
+  });
+</script>

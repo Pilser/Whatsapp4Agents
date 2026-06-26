@@ -158,6 +158,16 @@ CREATE TABLE IF NOT EXISTS tc_tokens (
     PRIMARY KEY (jid, device_id)
 );
 
+CREATE TABLE IF NOT EXISTS msg_secrets (
+    chat TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    msg_id TEXT NOT NULL,
+    secret BLOB NOT NULL,
+    device_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (chat, sender, msg_id, device_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sent_messages_device_created
     ON sent_messages(device_id, created_at);
 ";

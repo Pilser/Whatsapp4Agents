@@ -171,7 +171,7 @@ impl OutboundQueue {
         let chat_jid = Jid::from_str(&item.chat_id)
             .map_err(|e| anyhow::anyhow!("Invalid JID '{}': {e}", item.chat_id))?;
 
-        let agent_jid = client.get_pn().await.map(|j| j.to_string()).unwrap_or_default();
+        let agent_jid = client.get_pn().map(|j| j.to_string()).unwrap_or_default();
         let client = client.clone();
         drop(clients);
 

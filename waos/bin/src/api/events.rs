@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use hyper::{Body, Response};
+use tracing::warn;
 
 use crate::server::ApiState;
 
@@ -10,6 +11,13 @@ pub async fn stream(state: Arc<ApiState>) -> Response<Body> {
     let (mut tx, body) = Body::channel();
 
     tokio::spawn(async move {
+        // Send initial SSE comment to flush HTTP response headers immediately.
+        // Without this, hyper may buffer the status 200 + Content-Type header
+        // until the first data chunk, causing the browser's EventSource to never
+        // fire `onopen` and stay stuck in "connecting..." state.
+        if tx.send_data(":\n\n".into()).await.is_err() {
+            return;
+        }
         loop {
             match rx.recv().await {
                 Ok(event) => {
@@ -19,6 +27,7 @@ pub async fn stream(state: Arc<ApiState>) -> Response<Body> {
                     };
                     let msg = format!("data: {}\n\n", json);
                     if tx.send_data(msg.into()).await.is_err() {
+                        warn!("SSE client disconnected");
                         break;
                     }
                 }

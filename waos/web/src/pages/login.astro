@@ -1,0 +1,78 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Login">
+  <div class="max-w-md mx-auto mt-8 sm:mt-16">
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-6 sm:p-8">
+      <h1 class="text-xl font-bold mb-2">WAOS Login</h1>
+      <p class="text-sm text-waos-dim mb-6">Enter your API token to manage accounts</p>
+
+      <form id="login-form" class="space-y-4">
+        <div>
+          <label for="token-input" class="block text-sm text-waos-dim mb-1">API Token</label>
+          <input type="password" id="token-input" placeholder="Paste your JWT token" required
+            class="w-full bg-waos-bg border border-waos-border rounded-lg px-3 py-2.5 text-sm text-waos-text placeholder-waos-dim focus:outline-none focus:border-waos-accent transition">
+        </div>
+        <button type="submit" class="w-full bg-waos-accent text-white text-sm font-medium px-5 py-2.5 rounded-lg hover:brightness-110 transition">Save Token</button>
+        <p id="login-error" class="text-sm text-waos-danger hidden"></p>
+      </form>
+
+      <div class="mt-6 pt-4 border-t border-waos-border">
+        <button id="get-token-btn" class="w-full text-sm font-medium px-4 py-2 rounded-lg border border-waos-info text-waos-info hover:bg-waos-info/10 transition">Fetch New Token</button>
+        <p id="fetch-result" class="text-xs mt-2 text-waos-dim hidden"></p>
+      </div>
+
+      <p class="text-xs text-waos-dim mt-4 text-center">
+        Don't have a token? Configure <code class="text-waos-accent">jwt_secret</code> in your config.
+      </p>
+    </div>
+  </div>
+</Base>
+
+<script>
+var KEY = 'waos_token';
+
+var existing = localStorage.getItem(KEY);
+if (existing) document.getElementById('token-input').value = existing;
+
+document.getElementById('login-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var token = document.getElementById('token-input').value.trim();
+  var error = document.getElementById('login-error');
+
+  if (!token) {
+    error.textContent = 'Token is required';
+    error.classList.remove('hidden');
+    return;
+  }
+
+  localStorage.setItem(KEY, token);
+  error.classList.add('hidden');
+  document.getElementById('login-form').innerHTML =
+    '<div class="text-sm text-waos-accent text-center py-4">Token saved. <a href="/" class="underline">Go to Dashboard &rarr;</a></div>';
+  document.getElementById('nav-login').textContent = 'Token';
+});
+
+document.getElementById('get-token-btn').addEventListener('click', function() {
+  var result = document.getElementById('fetch-result');
+  result.classList.remove('hidden');
+  result.className = 'text-xs mt-2 text-waos-dim';
+  result.textContent = 'Fetching...';
+
+  fetch('/api/auth/token').then(function(r) { return r.json(); }).then(function(data) {
+    if (data.token) {
+      localStorage.setItem(KEY, data.token);
+      document.getElementById('token-input').value = data.token;
+      result.textContent = 'Token fetched and saved!';
+      result.className = 'text-xs mt-2 text-waos-accent';
+    } else {
+      result.textContent = data.error || 'Failed to fetch token';
+      result.className = 'text-xs mt-2 text-waos-danger';
+    }
+  }).catch(function(e) {
+    result.textContent = e.message;
+    result.className = 'text-xs mt-2 text-waos-danger';
+  });
+});
+</script>

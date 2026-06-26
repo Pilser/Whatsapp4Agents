@@ -9,6 +9,7 @@ mod signal;
 mod app_sync;
 mod protocol;
 mod device;
+mod msg_secret;
 
 pub use turso::Connection;
 

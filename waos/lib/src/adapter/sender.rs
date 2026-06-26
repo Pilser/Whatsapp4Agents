@@ -28,11 +28,11 @@ pub fn make_reaction_message(target_id: &str, emoji: &str) -> wa::Message {
         ..Default::default()
     };
     wa::Message {
-        reaction_message: Some(wa::message::ReactionMessage {
+        reaction_message: Some(Box::new(wa::message::ReactionMessage {
             key: Some(key),
             text: Some(emoji.to_string()),
             ..Default::default()
-        }),
+        })),
         ..Default::default()
     }
 }

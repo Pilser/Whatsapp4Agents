@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #313d45 transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+canvas {
+  display: block;
+  flex-shrink: 0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-pulse-dot {
+  animation: pulseDot 2s ease-in-out infinite;
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.event-log {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.event-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.event-log::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.event-log::-webkit-scrollbar-thumb {
+  background: #313d45;
+  border-radius: 3px;
+}
+
+input, button, select, textarea {
+  font-size: 16px;
+}
+
+input:focus, button:focus-visible {
+  outline: 2px solid #25D366;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #25D366;
+  color: #111b21;
+}
+
+@media (max-width: 640px) {
+  .acct-card .pair-inline .pair-confirm-step,
+  .acct-card .pair-inline .pair-form-step {
+    padding: 0.625rem;
+  }
+  .acct-card .pair-inline input.pair-phone {
+    font-size: 16px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .acct-card .pair-btn,
+  .acct-card .pair-submit,
+  .acct-card .pair-cancel,
+  .acct-card .pair-continue,
+  .acct-card .manage-btn,
+  .acct-card .regen-icon {
+    min-height: 44px;
+  }
+}

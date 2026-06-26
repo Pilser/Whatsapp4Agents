@@ -19,4 +19,9 @@
 !waos/**
 waos/target/
 waos/**/node_modules/
+waos/**/dist/
+# Allow only whatsapp-rust/wacore and its files
+!xwhatsapp-rust/**
+!xwhatsapp-rust/wacore/
+!xwhatsapp-rust/wacore/**
 

@@ -1,0 +1,287 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Live Dashboard">
+  <div class="flex items-center justify-between mb-6 sm:mb-8">
+    <h1 class="text-xl sm:text-2xl font-bold">Live Dashboard</h1>
+    <a href="/accounts" class="text-xs font-medium px-3 py-1.5 rounded-lg border border-waos-border text-waos-dim hover:text-waos-text transition">All Accounts &rarr;</a>
+  </div>
+
+  <div id="account-list" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 mb-8">
+    <p class="text-waos-dim italic text-sm col-span-full">Loading accounts...</p>
+  </div>
+
+  <div class="bg-waos-surface border border-waos-border rounded-xl overflow-hidden">
+    <div class="px-4 sm:px-5 py-3 border-b border-waos-border flex items-center justify-between">
+      <h2 class="text-sm font-semibold">Event Stream</h2>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-waos-dim">Status:</span>
+        <span id="conn-status" class="text-xs font-medium text-waos-warn">connecting...</span>
+        <button id="clear-log" class="text-xs px-2 py-1 rounded border border-waos-border text-waos-dim hover:text-waos-text transition">Clear</button>
+      </div>
+    </div>
+    <div id="event-log" class="h-96 overflow-y-auto p-3 sm:p-4 space-y-1 text-sm font-mono event-log">
+      <p class="text-waos-dim italic">No events yet</p>
+    </div>
+  </div>
+</Base>
+
+<script>
+import QRCode from 'qrcode';
+var eventCount = 0;
+var MAX = 1000;
+
+function statusBadge(s) {
+  var c = WAOS.statusColor(s);
+  return '<span class="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ' + c.bg + ' ' + c.text + '">' +
+    '<span class="w-1.5 h-1.5 rounded-full ' + c.dot + '"></span>' + s + '</span>';
+}
+
+// ---- Persistent event log via localStorage ----
+function loadEvents() {
+  var stored = localStorage.getItem('waos_events');
+  if (!stored) return 0;
+  try {
+    var events = JSON.parse(stored);
+    var log = document.getElementById('event-log');
+    log.innerHTML = events.map(function(e) {
+      return '<div class="text-waos-dim animate-fade-in"><span class="text-waos-muted">' + e.time + '</span> <span class="text-waos-accent">' + e.type + '</span>' + (e.text ? ' ' + e.text : '') + '</div>';
+    }).join('');
+    var count = events.length;
+    if (count > 0) {
+      var italic = log.querySelector('p');
+      if (italic) italic.remove();
+    }
+    return count;
+  } catch(e) { return 0; }
+}
+
+function addEvent(type, payload) {
+  var log = document.getElementById('event-log');
+  var time = new Date().toLocaleTimeString();
+  var text = payload.code || payload.status || '';
+  if (text && text.length > 80) text = text.slice(0, 80) + '...';
+
+  var entry = { time: time, type: type, text: text };
+  var stored = localStorage.getItem('waos_events');
+  var events = stored ? JSON.parse(stored) : [];
+  events.push(entry);
+  if (events.length > MAX) events = events.slice(-MAX);
+  localStorage.setItem('waos_events', JSON.stringify(events));
+
+  var div = document.createElement('div');
+  div.className = 'text-waos-dim animate-fade-in';
+  div.innerHTML = '<span class="text-waos-muted">' + time + '</span> <span class="text-waos-accent">' + type + '</span>' + (text ? ' ' + text : '');
+  log.appendChild(div);
+  eventCount++;
+  if (eventCount > MAX) { log.firstChild.remove(); eventCount--; }
+  log.scrollTop = log.scrollHeight;
+  var italic = log.querySelector('p');
+  if (italic) italic.remove();
+}
+
+document.getElementById('clear-log').addEventListener('click', function() {
+  localStorage.removeItem('waos_events');
+  document.getElementById('event-log').innerHTML = '<p class="text-waos-dim italic">No events yet</p>';
+  eventCount = 0;
+});
+
+// ---- Account cards ----
+function loadAccounts() {
+  WAOS.api('/api/accounts').then(function(data) {
+    var list = document.getElementById('account-list');
+    if (!data.accounts || data.accounts.length === 0) {
+      list.innerHTML = '<p class="text-waos-dim italic text-sm col-span-full">No accounts</p>';
+      return;
+    }
+    list.innerHTML = data.accounts.map(function(a) {
+      var li = WAOS.isLoggedIn(a.status);
+      var qrInner = li
+        ? '<div class="flex flex-col items-center gap-2 text-sm text-emerald-400 justify-center py-4"><svg class="w-8 h-8 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg><span>Account already logged in</span></div>'
+        : '<div class="text-xs text-waos-dim italic py-6 text-center">Waiting for QR code...</div>';
+      return '<div class="acct-card bg-waos-surface border border-waos-border rounded-xl p-4 space-y-3" data-alias="' + a.alias + '">' +
+        '<div class="flex items-center justify-between gap-2">' +
+          '<span class="font-semibold text-sm truncate">' + a.alias + '</span>' +
+          statusBadge(a.status) +
+        '</div>' +
+        '<div class="acct-qr-wrap flex flex-col items-center justify-center min-h-[140px]">' + qrInner + '</div>' +
+        '<div class="acct-pair">' +
+          '<button class="pair-btn w-full text-sm px-3 py-1.5 rounded-lg border border-waos-info text-waos-info hover:bg-waos-info/10 transition">Pair with Code</button>' +
+          '<div class="pair-inline hidden mt-2">' +
+            '<div class="pair-confirm-step p-3 bg-waos-bg rounded-lg space-y-3">' +
+              '<p class="text-xs text-waos-muted" id="pair-warn-text-' + a.alias + '">This will initiate a pairing request for <strong>' + a.alias + '</strong>. Continue?</p>' +
+              '<div class="flex gap-2 justify-end">' +
+                '<button class="pair-cancel text-xs px-3 py-1.5 rounded-lg border border-waos-border text-waos-dim hover:text-waos-text transition">Cancel</button>' +
+                '<button class="pair-continue text-xs px-3 py-1.5 rounded-lg bg-waos-info text-white hover:brightness-110 transition">Continue</button>' +
+              '</div>' +
+            '</div>' +
+            '<div class="pair-form-step hidden p-3 bg-waos-bg rounded-lg space-y-2">' +
+              '<input type="text" class="pair-phone w-full bg-waos-surface border border-waos-border rounded-lg px-3 py-1.5 text-sm placeholder-waos-dim focus:outline-none focus:border-waos-accent" placeholder="5511999999999 (digits only, no +)">' +
+              '<button class="pair-submit w-full text-sm px-3 py-1.5 rounded-lg bg-waos-info text-white hover:brightness-110">Send Pair Code</button>' +
+              '<p class="pair-result text-xs"></p>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+    data.accounts.forEach(function(a) {
+      if (!WAOS.isLoggedIn(a.status)) fetchQr(a.alias);
+    });
+    setupCardEvents();
+  }).catch(function() {
+    document.getElementById('account-list').innerHTML = '<p class="text-sm text-red-400 col-span-full">Failed to load accounts.</p>';
+  });
+}
+
+function fetchQr(alias) {
+  var wrap = document.querySelector('.acct-card[data-alias="' + alias + '"] .acct-qr-wrap');
+  if (!wrap) return;
+  WAOS.api('/api/accounts/' + alias + '/qr?t=' + Date.now()).then(function(data) {
+    if (data.qr && typeof data.qr === 'string' && data.qr.length > 0) {
+      wrap.innerHTML = '';
+      var canvas = document.createElement('canvas');
+      var size = Math.min(240, wrap.clientWidth - 16);
+      canvas.width = size;
+      canvas.height = size;
+      canvas.style.width = size + 'px';
+      canvas.style.height = size + 'px';
+      canvas.style.borderRadius = '12px';
+      QRCode.toCanvas(canvas, data.qr, { width: size, margin: 2, color: { dark: '#000000', light: '#ffffff' } }).catch(function() {
+        wrap.innerHTML = '<div class="flex flex-col items-center gap-2 text-sm text-waos-warn justify-center py-4"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg><span>QR render error</span><button class="regen-icon text-xs px-2 py-1 mt-1 rounded border border-waos-warn text-waos-warn hover:bg-waos-warn/10 transition" data-regen="' + alias + '">Regenerate</button></div>';
+      });
+      wrap.appendChild(canvas);
+    } else {
+      wrap.innerHTML = '<div class="flex flex-col items-center gap-2 text-sm text-waos-dim justify-center py-4"><svg class="w-8 h-8 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>No QR code available</span><button class="regen-icon text-xs px-2 py-1 mt-1 rounded border border-waos-warn text-waos-warn hover:bg-waos-warn/10 transition" data-regen="' + alias + '">Regenerate</button></div>';
+    }
+    setupRegenButtons();
+  }).catch(function(err) {
+    wrap.innerHTML = '<div class="flex flex-col items-center gap-2 text-sm text-waos-danger justify-center py-4"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><span>Error: ' + (err.message || 'unknown') + '</span><button class="regen-icon text-xs px-2 py-1 mt-1 rounded border border-waos-warn text-waos-warn hover:bg-waos-warn/10 transition" data-regen="' + alias + '">Regenerate</button></div>';
+    setupRegenButtons();
+  });
+}
+
+function setupRegenButtons() {
+  document.querySelectorAll('.regen-icon').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var alias = this.dataset.regen;
+      if (!alias) return;
+      if (confirm('This will clear the current session for "' + alias + '" and generate a new QR code. Continue?')) {
+        WAOS.api('/api/accounts/' + alias + '/regenerate-qr', { method: 'POST' }).then(function() {
+          setTimeout(function() { loadAccounts(); }, 500);
+        }).catch(function(e) { alert(e.message); });
+      }
+    });
+  });
+}
+
+function setupCardEvents() {
+  document.querySelectorAll('.pair-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var card = this.closest('.acct-card');
+      var alias = card.dataset.alias;
+      var inline = card.querySelector('.pair-inline');
+      if (!inline.classList.contains('hidden')) {
+        inline.classList.add('hidden');
+        inline.querySelector('.pair-confirm-step').classList.remove('hidden');
+        inline.querySelector('.pair-form-step').classList.add('hidden');
+        return;
+      }
+      var warnEl = inline.querySelector('[id^="pair-warn-text-"]');
+      if (warnEl) {
+        var isLoggedIn = card.querySelector('.acct-qr-wrap').innerHTML.indexOf('Account already logged in') !== -1;
+        warnEl.innerHTML = isLoggedIn
+          ? 'This account is <strong>CURRENTLY LOGGED IN</strong>. Pairing will log it out and wipe credentials. Continue?'
+          : 'This will initiate a pairing request for <strong>' + alias + '</strong>. Continue?';
+      }
+      inline.classList.remove('hidden');
+    });
+  });
+
+  document.querySelectorAll('.pair-cancel').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var inline = this.closest('.pair-inline');
+      inline.classList.add('hidden');
+      inline.querySelector('.pair-confirm-step').classList.remove('hidden');
+      inline.querySelector('.pair-form-step').classList.add('hidden');
+    });
+  });
+
+  document.querySelectorAll('.pair-continue').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var inline = this.closest('.pair-inline');
+      inline.querySelector('.pair-confirm-step').classList.add('hidden');
+      inline.querySelector('.pair-form-step').classList.remove('hidden');
+      inline.querySelector('.pair-phone').focus();
+    });
+  });
+
+  document.querySelectorAll('.pair-submit').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var inline = this.closest('.pair-inline');
+      if (!inline) return;
+      var card = inline.closest('.acct-card');
+      if (!card) return;
+      var alias = card.dataset.alias;
+      var phoneInput = inline.querySelector('.pair-phone');
+      var resultEl = inline.querySelector('.pair-result');
+      if (!phoneInput || !resultEl) return;
+      var phone = phoneInput.value.trim().replace(/\D/g, '');
+      if (!phone) { resultEl.textContent = 'Enter a phone number'; resultEl.className = 'text-xs text-waos-danger'; return; }
+      // Replace QR with pairing status
+      var wrap = card.querySelector('.acct-qr-wrap');
+      var pairingEl = document.createElement('div');
+      pairingEl.className = 'flex flex-col items-center gap-2 text-sm text-waos-info justify-center py-4';
+      pairingEl.innerHTML = '<svg class="w-8 h-8 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg><span>Pairing via code...</span><span class="text-xs text-waos-dim">Waiting for WhatsApp</span>';
+      if (wrap) { wrap.innerHTML = ''; wrap.appendChild(pairingEl); }
+      resultEl.textContent = 'Sending...';
+      resultEl.className = 'text-xs text-waos-dim';
+      WAOS.api('/api/accounts/' + alias + '/pair', { method: 'POST', body: JSON.stringify({ phone: phone }) }).then(function(data) {
+        resultEl.innerHTML = 'Code: <strong class="text-waos-accent">' + data.code + '</strong> — enter this on your phone.';
+        resultEl.className = 'text-xs text-waos-text';
+        phoneInput.value = '';
+        if (wrap) {
+          wrap.innerHTML = '<div class="flex flex-col items-center gap-2 text-sm text-waos-info justify-center py-4"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg><span>Code: <strong>' + data.code + '</strong></span><span class="text-xs text-waos-dim">Enter this code on your phone</span></div>';
+        }
+      }).catch(function(e) {
+        if (!card.parentNode) return; // card was removed
+        resultEl.textContent = e.message;
+        resultEl.className = 'text-xs text-waos-danger';
+        // Restore QR after pair failure
+        if (wrap && wrap.firstChild === pairingEl) { fetchQr(alias); }
+      });
+    });
+  });
+}
+
+function updateAccountStatus(alias, status) {
+  var card = document.querySelector('.acct-card[data-alias="' + alias + '"]');
+  if (!card) return;
+  var badgeArea = card.querySelector('.flex.items-center.justify-between.gap-2');
+  if (badgeArea) {
+    badgeArea.innerHTML = '<span class="font-semibold text-sm truncate">' + alias + '</span>' + statusBadge(status);
+  }
+  var wrap = card.querySelector('.acct-qr-wrap');
+  if (!wrap) return;
+  if (WAOS.isLoggedIn(status)) {
+    wrap.innerHTML = '<div class="flex flex-col items-center gap-2 text-sm text-emerald-400 justify-center py-4"><svg class="w-8 h-8 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg><span>Account already logged in</span></div>';
+  } else {
+    fetchQr(alias);
+  }
+}
+
+WAOS.sseOn('*', function(p, type) { addEvent(type, p); });
+WAOS.sseOn('Connected', function(p) { document.getElementById('conn-status').textContent = 'connected'; updateAccountStatus(p.account, 'connected'); });
+WAOS.sseOn('Disconnected', function(p) { document.getElementById('conn-status').textContent = 'disconnected'; updateAccountStatus(p.account, 'disconnected'); });
+WAOS.sseOn('Reconnecting', function(p) { updateAccountStatus(p.account, 'reconnecting'); });
+WAOS.sseOn('AccountStatusUpdate', function(p) { updateAccountStatus(p.account, p.status); });
+WAOS.sseOn('QrCodeReady', function(p) { updateAccountStatus(p.account, 'disconnected'); setTimeout(function() { fetchQr(p.account); }, 200); });
+WAOS.sseOn('PairingCode', function(p) { updateAccountStatus(p.account, 'pairing'); });
+WAOS.sseOn('AccountTempBan', function(p) { updateAccountStatus(p.account, 'banned'); });
+
+eventCount = loadEvents();
+WAOS.sseOnOpen(function() { document.getElementById('conn-status').textContent = 'connected'; });
+WAOS.sseConnect();
+loadAccounts();
+</script>

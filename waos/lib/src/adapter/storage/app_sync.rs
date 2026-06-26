@@ -126,6 +126,17 @@ impl AppSyncStore for TursoStore {
         }
     }
 
+    async fn clear_mutation_macs(&self, name: &str) -> wacore::store::error::Result<()> {
+        let conn = self.conn.lock();
+        crate::to_store_err!(conn.execute(
+            "DELETE FROM app_state_mutation_macs WHERE name = ?1 AND device_id = ?2",
+            Params::Positional(vec![
+                Value::from(name),
+                Value::from(self.device_id),
+            ]),
+        ).await.map(|_| ()))
+    }
+
     async fn delete_mutation_macs(
         &self,
         name: &str,
@@ -137,7 +148,7 @@ impl AppSyncStore for TursoStore {
                 "DELETE FROM app_state_mutation_macs WHERE name = ?1 AND index_mac = ?2 AND device_id = ?3",
                 Params::Positional(vec![
                     Value::from(name),
-                    Value::from(index_mac.as_slice()),
+                    Value::from(index_mac.clone()),
                     Value::from(self.device_id),
                 ]),
             ).await.map(|_| ()))?;

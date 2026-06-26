@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use whatsapp_rust::bot::Bot;
 use whatsapp_rust::client::Client;
+use whatsapp_rust::pair_code::PairCodeOptions;
 use whatsapp_rust::store::{Device, DeviceStore};
 use whatsapp_rust::TokioRuntime;
 use whatsapp_rust_tokio_transport::TokioWebSocketTransportFactory;
@@ -24,9 +25,11 @@ use crate::sync_engine::SyncEngine;
 use waos_core::events::WaosEvent;
 
 /// Target hostname for network connectivity checks (WhatsApp Web endpoint).
-const WHATSAPP_HOST: &str = "wss.web.whatsapp.com:443";
+// Use a generic host for network check — wss.web.whatsapp.com can fail DNS
+// in some environments even when general internet is fine (browser uses DoH).
+const WHATSAPP_HOST: &str = "1.1.1.1:443";
 /// Interval between DNS probes during backoff sleep.
-const NET_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const NET_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Returns true if DNS resolution succeeds for the WhatsApp Web hostname.
 async fn is_network_available() -> bool {
@@ -102,6 +105,7 @@ pub struct AccountManager {
     pub clients: ClientRegistry,
     pub pending_clients: Arc<Mutex<HashMap<String, Arc<Client>>>>,
     pub qr_codes: Arc<Mutex<HashMap<String, String>>>,
+    pub pair_results: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     pub sync_engine: Option<SyncEngine>,
 }
 
@@ -118,6 +122,7 @@ impl AccountManager {
             clients: Arc::new(Mutex::new(HashMap::new())),
             pending_clients: Arc::new(Mutex::new(HashMap::new())),
             qr_codes: Arc::new(Mutex::new(HashMap::new())),
+            pair_results: Arc::new(Mutex::new(HashMap::new())),
             sync_engine: None,
         }
     }
@@ -149,11 +154,12 @@ impl AccountManager {
         let clients = self.clients.clone();
         let pending_clients = self.pending_clients.clone();
         let qr_codes = self.qr_codes.clone();
+        let pair_results = self.pair_results.clone();
         let sync = self.sync_engine.clone();
         let phone_owned = phone.clone();
 
         let bot_handle = tokio::spawn(async move {
-            Self::run_bot(&alias_owned, &session_path, eb, cancel_clone, clients, pending_clients, qr_codes, phone_owned, sync).await;
+            Self::run_bot(&alias_owned, &session_path, eb, cancel_clone, clients, pending_clients, qr_codes, pair_results, phone_owned, sync).await;
         });
 
         self.handles.insert(
@@ -178,6 +184,7 @@ impl AccountManager {
         clients: ClientRegistry,
         pending_clients: Arc<Mutex<HashMap<String, Arc<Client>>>>,
         qr_codes: Arc<Mutex<HashMap<String, String>>>,
+        pair_results: Arc<Mutex<HashMap<String, Result<String, String>>>>,
         phone: Option<String>,
         sync_engine: Option<SyncEngine>,
     ) {
@@ -247,10 +254,11 @@ impl AccountManager {
             let retry_count_clone = retry_count.clone();
             let clients_clone = clients.clone();
             let qr_codes_clone = qr_codes.clone();
+            let pair_results_clone = pair_results.clone();
             let sync_clone = sync_engine.clone();
 
             let mut builder = Bot::builder()
-                .with_backend(backend)
+                .with_backend_arc(backend)
                 .with_transport_factory(transport_factory)
                 .with_http_client(http_client)
                 .with_runtime(TokioRuntime)
@@ -260,11 +268,8 @@ impl AccountManager {
                         .with_platform_type(PlatformType::Desktop),
                 );
 
-            // Pair code is handled externally by the API handler — not via
-            // the builder's internal task which has poor error visibility.
-            // The external handler stores the client early via pending_clients
-            // and calls Client::pair_with_code() directly with proper errors.
-
+            // Pair code is handled by a spawned task after bot.spawn() — not via
+            // the builder's internal task (which has poor error visibility).
             builder = builder.on_event({
                     let alias = alias_clone.clone();
                     let eb = eb.clone();
@@ -281,6 +286,7 @@ impl AccountManager {
                         let _rc = retry_count.clone();
                         let cl = clients.clone();
                         let qr_clone = qr.clone();
+                        let pr = pair_results_clone.clone();
                         let sync = sync_clone.clone();
                         async move {
                             match &*event {
@@ -343,6 +349,7 @@ impl AccountManager {
                                         account: a.clone(),
                                         code: code.clone(),
                                     });
+                                    pr.lock().await.insert(a.clone(), Ok(code.clone()));
                                     println!("\nPair code for account '{a}': {code}\n");
                                 }
                                 Event::PairingQrCode { code, .. } => {
@@ -561,9 +568,11 @@ impl AccountManager {
                                 }
                                 Event::PairError(err) => {
                                     error!("[{a}] Pair error: {} (lid: {}) err: {}", err.id, err.lid, err.error);
+                                    let err_msg = err.error.clone();
+                                    pr.lock().await.insert(a.clone(), Err(err_msg.clone()));
                                     e.publish(WaosEvent::AccountStatusUpdate {
                                         account: a.clone(),
-                                        status: format!("pair_error:{}", err.error),
+                                        status: format!("pair_error:{err_msg}"),
                                     });
                                 }
                                 Event::ConnectFailure(fail) => {
@@ -643,19 +652,43 @@ impl AccountManager {
                 }
             }
 
-            // bot.run() spawns the client in a background task and returns a
-            // BotHandle that fires when the client's run loop completes.
-            let mut bot_handle = match bot.run().await {
-                Ok(h) => h,
-                Err(e) => {
-                    pending_clients.lock().await.remove(alias);
-                    error!("[{alias}] Run bot failed: {e}");
-                    wait_for_network(Duration::from_secs(10), alias).await;
-                    continue;
-                }
-            };
+            // If phone number was provided, clone the client before bot.spawn()
+            let pair_client = if phone.is_some() { Some(bot.client()) } else { None };
 
-            // DNS monitor: aborts the bot if network stays down for ~30s,
+            // bot.spawn() starts the client in a background task and returns a
+            // BotHandle that fires when the client's run loop completes.
+            let mut bot_handle = bot.spawn();
+
+            // If phone number was provided, spawn pair code task.
+            // Runs concurrently with bot — wait_for_socket waits for the
+            // noise socket to be established, then calls pair_with_code.
+            if let Some(pc) = pair_client {
+                let pair_alias = alias.to_string();
+                let pair_phone = phone.clone().unwrap();
+                let pair_results = pair_results.clone();
+                tokio::spawn(async move {
+                    info!("[{pair_alias}] Waiting for socket before pair...");
+                    if let Err(e) = pc.wait_for_socket(std::time::Duration::from_secs(60)).await {
+                        warn!("[{pair_alias}] Socket not ready for pair: {e}");
+                        pair_results.lock().await.insert(pair_alias, Err(format!("socket timeout: {e}")));
+                        return;
+                    }
+                    info!("[{pair_alias}] Socket ready, calling pair_with_code for {pair_phone}");
+                    let options = PairCodeOptions::for_phone(&pair_phone);
+                    match pc.pair_with_code(options).await {
+                        Ok(code) => {
+                            info!("[{pair_alias}] Pair code generated, length: {}", code.len());
+                            pair_results.lock().await.insert(pair_alias, Ok(code));
+                        }
+                        Err(e) => {
+                            warn!("[{pair_alias}] Pair failed: {e:?}");
+                            pair_results.lock().await.insert(pair_alias, Err(format!("{e:?}")));
+                        }
+                    }
+                });
+            }
+
+            // DNS monitor: aborts the bot if network stays down for ~9s,
             // so we don't sit idle through the inner loop's fibonacci backoff.
             let dns_alert = {
                 let a = alias.to_string();
@@ -663,12 +696,12 @@ impl AccountManager {
                 async move {
                     let mut failures = 0u32;
                     loop {
-                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        tokio::time::sleep(Duration::from_secs(3)).await;
                         if c.load(Ordering::Relaxed) { return; }
                         if !is_network_available().await {
                             failures += 1;
                             if failures >= 3 {
-                                warn!("[{a}] Network unreachable for ~30s");
+                                warn!("[{a}] Network unreachable for ~9s");
                                 return;
                             }
                         } else {
@@ -687,11 +720,13 @@ impl AccountManager {
                 _ = &mut bot_handle => {
                     info!("[{alias}] Client run loop exited");
                     clients.lock().await.remove(alias);
+                    qr_codes.lock().await.remove(alias);
                 }
                 _ = logout_rx.recv() => {
                     info!("[{alias}] Session logged out / revoked");
                     bot_handle.abort();
                     clients.lock().await.remove(alias);
+                    qr_codes.lock().await.remove(alias);
                     let _ = &mut bot_handle.await;
                     session_revoked_val = session_revoked.load(Ordering::Relaxed);
                 }
@@ -700,6 +735,7 @@ impl AccountManager {
                     bot_handle.abort();
                     clients.lock().await.remove(alias);
                     pending_clients.lock().await.remove(alias);
+                    qr_codes.lock().await.remove(alias);
                     let _ = &mut bot_handle.await;
                     network_forced = true;
                 }
@@ -707,13 +743,12 @@ impl AccountManager {
                     info!("[{alias}] Ctrl+C received");
                     bot_handle.abort();
                     clients.lock().await.remove(alias);
+                    qr_codes.lock().await.remove(alias);
                     let _ = &mut bot_handle.await;
-                    drop(bot);
                     break;
                 }
             }
 
-            drop(bot);
             drop(device);
 
             if session_revoked_val {
@@ -741,8 +776,11 @@ impl AccountManager {
 
     pub async fn remove_account(&mut self, alias: &str) {
         self.pending_clients.lock().await.remove(alias);
+        self.clients.lock().await.remove(alias);
+        self.pair_results.lock().await.remove(alias);
         if let Some(handle) = self.handles.remove(alias) {
             handle.cancel.store(true, Ordering::Relaxed);
+            handle.bot_handle.abort();
             info!("Account '{alias}' removed");
         }
     }

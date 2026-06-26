@@ -1,0 +1,186 @@
+---
+import '../styles/global.css';
+export interface Props {
+  title: string;
+}
+const { title } = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang="en" class="bg-waos-bg text-waos-text">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>{title} — WAOS</title>
+  <script>
+  window.WAOS = {
+    getToken() { return localStorage.getItem('waos_token') },
+    setToken(t) { localStorage.setItem('waos_token', t) },
+    clearToken() { localStorage.removeItem('waos_token') },
+    isAuthed() { return !!this.getToken() },
+
+    async api(path, opts = {}) {
+      const headers = { 'Content-Type': 'application/json', ...opts.headers };
+      const t = this.getToken();
+      if (t) headers['Authorization'] = 'Bearer ' + t;
+      const res = await fetch(path, { ...opts, headers });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 401) this.clearToken();
+        throw new Error(data?.error || res.statusText || 'Request failed');
+      }
+      return data;
+    },
+
+    statusColor(s) {
+      switch (s) {
+        case 'connected': return { bg: 'bg-emerald-500/15', text: 'text-emerald-400', dot: 'bg-emerald-400' };
+        case 'disconnected': return { bg: 'bg-red-500/15', text: 'text-red-400', dot: 'bg-red-400' };
+        case 'reconnecting': return { bg: 'bg-amber-500/15', text: 'text-amber-400', dot: 'bg-amber-400 animate-pulse-dot' };
+        case 'pairing': return { bg: 'bg-blue-500/15', text: 'text-blue-400', dot: 'bg-blue-400 animate-pulse-dot' };
+        case 'paired': return { bg: 'bg-emerald-500/15', text: 'text-emerald-400', dot: 'bg-emerald-400' };
+        case 'banned': return { bg: 'bg-orange-500/15', text: 'text-orange-400', dot: 'bg-orange-400' };
+        default: return { bg: 'bg-gray-500/15', text: 'text-gray-400', dot: 'bg-gray-400' };
+      }
+    },
+
+    isLoggedIn(s) { return s === 'connected' || s === 'paired' },
+
+    statusHtml(s) {
+      const c = this.statusColor(s);
+      return '<span class="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full ' + c.bg + ' ' + c.text + '">' +
+        '<span class="w-2 h-2 rounded-full ' + c.dot + '"></span>' + s + '</span>';
+    },
+
+    loggedBadge() {
+      return '<span class="inline-flex items-center gap-1 text-xs font-medium text-emerald-400/80 ml-2">' +
+        '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' +
+        'Logged in</span>';
+    },
+
+    _sse: null,
+    _log: [],
+    _cbs: new Map(),
+    _maxLog: 300,
+
+    sseConnect() {
+      if (this._sse) this._sse.close();
+      if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+      const self = this;
+      const es = new EventSource('/events');
+      es.onopen = function() {
+        const cb = self._onOpen;
+        if (cb) cb();
+      };
+      es.onmessage = function(msg) {
+        try {
+          const data = JSON.parse(msg.data);
+          const type = Object.keys(data)[0];
+          const payload = data[type];
+          if (!payload) return;
+          self._log.push({ time: Date.now(), type: type, ...payload });
+          if (self._log.length > self._maxLog) self._log.shift();
+          const cbs = self._cbs.get(type);
+          if (cbs) cbs.forEach(function(fn) { fn(payload) });
+          const wcbs = self._cbs.get('*');
+          if (wcbs) wcbs.forEach(function(fn) { fn(payload, type) });
+        } catch(e) {}
+      };
+      es.onerror = function() {
+        self._reconnectTimer = setTimeout(function() { self.sseConnect() }, 3000);
+      };
+      self._sse = es;
+    },
+
+    sseOnOpen(cb) { this._onOpen = cb; },
+
+    sseOn(type, fn) {
+      if (!this._cbs.has(type)) this._cbs.set(type, []);
+      this._cbs.get(type).push(fn);
+    },
+
+    sseLog() { return this._log },
+
+    formatDuration(s) {
+      var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      var parts = [];
+      if (d) parts.push(d + 'd');
+      if (h) parts.push(h + 'h');
+      if (m) parts.push(m + 'm');
+      if (sec || !parts.length) parts.push(sec + 's');
+      return parts.join(' ');
+    }
+  };
+
+  document.querySelectorAll('[data-nav]').forEach(function(a) {
+    if (a.getAttribute('href') === location.pathname) {
+      a.classList.add('text-waos-accent', 'font-semibold');
+      a.classList.remove('text-waos-muted');
+    }
+  });
+  if (WAOS.getToken()) {
+    var loginEl = document.getElementById('nav-login');
+    if (loginEl) loginEl.textContent = 'Token';
+  }
+  </script>
+</head>
+<body class="min-h-screen antialiased flex flex-col">
+  <nav class="bg-waos-surface border-b border-waos-border sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6">
+      <div class="flex items-center h-12 sm:h-14">
+        <a href="/" class="font-bold text-lg text-waos-accent mr-auto tracking-wide whitespace-nowrap">WAOS</a>
+
+        <button id="nav-toggle" class="md:hidden p-2 -mr-2 text-waos-muted hover:text-waos-text transition" aria-label="Toggle menu">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+
+        <div id="nav-links" class="hidden md:flex items-center gap-1 ml-auto">
+          <a href="/" class="nav-link text-sm px-2.5 py-1.5 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="dashboard">Dashboard</a>
+          <a href="/accounts" class="nav-link text-sm px-2.5 py-1.5 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="accounts">Accounts</a>
+          <a href="/health" class="nav-link text-sm px-2.5 py-1.5 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="health">Health</a>
+          <a href="/dashboard" class="nav-link text-sm px-2.5 py-1.5 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="live">Live</a>
+          <a href="/login" class="nav-link text-sm px-2.5 py-1.5 rounded-lg text-waos-dim hover:text-waos-text hover:bg-waos-bg/50 transition ml-1" id="nav-login">Login</a>
+        </div>
+      </div>
+
+      <div id="nav-mobile" class="hidden md:hidden pb-3 border-t border-waos-border pt-2 space-y-1">
+        <a href="/" class="nav-link block text-sm px-3 py-2 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="dashboard">Dashboard</a>
+        <a href="/accounts" class="nav-link block text-sm px-3 py-2 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="accounts">Accounts</a>
+        <a href="/health" class="nav-link block text-sm px-3 py-2 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="health">Health</a>
+        <a href="/dashboard" class="nav-link block text-sm px-3 py-2 rounded-lg text-waos-muted hover:text-waos-text hover:bg-waos-bg/50 transition" data-nav="live">Live</a>
+        <a href="/login" class="nav-link block text-sm px-3 py-2 rounded-lg text-waos-dim hover:text-waos-text hover:bg-waos-bg/50 transition" id="nav-login-mobile">Login</a>
+      </div>
+    </div>
+  </nav>
+
+  <script>
+  document.getElementById('nav-toggle')?.addEventListener('click', function() {
+    var mobile = document.getElementById('nav-mobile');
+    var links = document.getElementById('nav-links');
+    mobile.classList.toggle('hidden');
+    if (links) links.classList.toggle('hidden');
+  });
+
+  document.querySelectorAll('#nav-mobile .nav-link').forEach(function(a) {
+    a.addEventListener('click', function() {
+      document.getElementById('nav-mobile').classList.add('hidden');
+      document.getElementById('nav-links')?.classList.remove('hidden');
+    });
+  });
+
+  document.querySelectorAll('[data-nav]').forEach(function(a) {
+    if (a.getAttribute('href') === location.pathname) {
+      a.classList.add('text-waos-accent', 'font-semibold');
+      a.classList.remove('text-waos-muted');
+    }
+  });
+  </script>
+
+  <main class="flex-1 max-w-6xl mx-auto w-full px-3 sm:px-6 py-4 sm:py-8">
+    <slot />
+  </main>
+  <footer class="text-center text-xs text-waos-dim py-3 sm:py-4 border-t border-waos-border">
+    WAOS — WhatsApp Agent Operating System
+  </footer>
+</body>
+</html>

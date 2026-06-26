@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use prost::Message;
 use turso::params::Params;
@@ -161,7 +163,7 @@ impl DeviceStoreTrait for TursoStore {
                     signed_pre_key_id,
                     signed_pre_key_signature: signature,
                     adv_secret_key: adv_secret,
-                    account,
+                    account: account.map(Arc::new),
                     push_name,
                     app_version_primary,
                     app_version_secondary,
@@ -198,7 +200,61 @@ impl DeviceStoreTrait for TursoStore {
     }
 
     async fn create(&self) -> wacore::store::error::Result<i32> {
-        Ok(self.device_id)
+        use prost::Message;
+        use wacore::libsignal::protocol::KeyPair;
+        use wacore::store::Device as CoreDevice;
+
+        let new_device = CoreDevice::new();
+        let serialize_kp = |kp: &KeyPair| -> Vec<u8> {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(kp.private_key.serialize().as_slice());
+            bytes.extend_from_slice(kp.public_key.public_key_bytes());
+            bytes
+        };
+
+        let noise_key = serialize_kp(&new_device.noise_key);
+        let identity_key = serialize_kp(&new_device.identity_key);
+        let signed_pre_key = serialize_kp(&new_device.signed_pre_key);
+
+        let conn = self.conn.lock();
+        crate::to_store_err!(conn.execute(
+            "INSERT INTO device (
+                id, lid, pn, registration_id, noise_key, identity_key,
+                signed_pre_key, signed_pre_key_id, signed_pre_key_signature,
+                adv_secret_key, account, push_name, app_version_primary,
+                app_version_secondary, app_version_tertiary, app_version_last_fetched_ms,
+                edge_routing_info, props_hash,
+                next_pre_key_id, server_has_prekeys, nct_salt,
+                server_cert_chain, login_counter
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18,
+                ?19, ?20, ?21, ?22, ?23)",
+            turso::params::Params::Positional(vec![
+                turso::Value::from(self.device_id as i64),
+                turso::Value::Null,
+                turso::Value::Null,
+                turso::Value::from(new_device.registration_id as i64),
+                turso::Value::from(noise_key),
+                turso::Value::from(identity_key),
+                turso::Value::from(signed_pre_key),
+                turso::Value::from(new_device.signed_pre_key_id as i64),
+                turso::Value::from(new_device.signed_pre_key_signature.to_vec()),
+                turso::Value::from(new_device.adv_secret_key.to_vec()),
+                turso::Value::Null,
+                turso::Value::from(new_device.push_name.as_str()),
+                turso::Value::from(new_device.app_version_primary as i64),
+                turso::Value::from(new_device.app_version_secondary as i64),
+                turso::Value::from(new_device.app_version_tertiary as i64),
+                turso::Value::from(new_device.app_version_last_fetched_ms),
+                turso::Value::Null,
+                turso::Value::Null,
+                turso::Value::from(new_device.next_pre_key_id as i64),
+                turso::Value::from(new_device.server_has_prekeys),
+                turso::Value::Null,
+                turso::Value::Null,
+                turso::Value::from(0i64),
+            ]),
+        ).await.map(|_| self.device_id))
     }
 
     async fn snapshot_db(&self, name: &str, extra_content: Option<&[u8]>) -> wacore::store::error::Result<()> {

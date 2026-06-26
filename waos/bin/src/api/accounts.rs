@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use hyper::{Body, Request, Response};
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
+use waos_core::events::WaosEvent;
 use whatsapp_rust::pair_code::PairCodeOptions;
 
 use crate::server::ApiState;
@@ -140,21 +141,34 @@ pub async fn pair(state: &Arc<ApiState>, alias: &str, req: Request<Body>) -> Res
     }
 
     let phone = normalize_phone(&pair_body.phone);
+    info!("[{alias}] Pair request for phone {phone}");
 
-    // Try to use existing connected client first
+    // Try existing connected client first — directly call pair_with_code
     let clients = state.daemon.account_manager.lock().await.clients.clone();
     let existing = clients.lock().await.get(alias).cloned();
     if let Some(client) = existing {
+        info!("[{alias}] Using existing connected client for pair");
         let options = PairCodeOptions::for_phone(&phone);
         match client.pair_with_code(options).await {
-            Ok(code) => return json_ok(&serde_json::json!({ "code": code })),
-            Err(e) => return json_error(500, &format!("{:?}", e)),
+            Ok(ref code) => {
+                info!("[{alias}] pair_with_code succeeded, code length: {}", code.len());
+                state.daemon.event_bus.publish(WaosEvent::PairingCode {
+                    account: alias.to_string(),
+                    code: code.clone(),
+                });
+                return json_ok(&serde_json::json!({ "code": code }));
+            }
+            Err(e) => {
+                tracing::error!("[{alias}] pair_with_code failed on existing client: {e:?}");
+                return json_error(500, &format!("{:?}", e));
+            }
         }
     }
 
-    // No connected client — restart bot WITHOUT internal pair_code flow and
-    // call pair_with_code() directly once the bot is running.
-    info!("Restarting bot '{}' for direct phone pairing with {}", alias, phone);
+    // No connected client — restart bot with with_pair_code on the builder.
+    // The bot's internal task (bot.rs:434) waits for socket and calls
+    // pair_with_code() during init, before QR mode takes over.
+    info!("[{alias}] No connected client — restarting bot for pair with {phone}");
 
     // Remove old bot and wipe session
     state.daemon.account_manager.lock().await.remove_account(alias).await;
@@ -174,48 +188,44 @@ pub async fn pair(state: &Arc<ApiState>, alias: &str, req: Request<Body>) -> Res
         }
         let _ = tokio::fs::remove_dir(&session_dir).await;
     }
-    // Clear any stale pending client
-    state.daemon.account_manager.lock().await.pending_clients.lock().await.remove(alias);
 
-    // Start bot WITHOUT phone — no with_pair_code on builder
+    // Start bot WITH phone — adds with_pair_code on the builder
+    info!("[{alias}] Spawning new bot for pair");
     if let Err(e) = state.daemon.account_manager.lock().await
-        .add_account(alias, &state.daemon.sessions_dir, &state.daemon.event_bus)
+        .add_account_with_phone(alias, &state.daemon.sessions_dir, &state.daemon.event_bus, Some(phone.clone()))
         .await
     {
         return json_error(500, &format!("failed to start bot: {e}"));
     }
 
-    // Poll pending_clients for up to 30s until the client is available
-    let client = {
-        let mut waited = 0u64;
-        let max_wait = 30u64;
-        let client = loop {
-            let mgr = state.daemon.account_manager.lock().await;
-            let pc = mgr.pending_clients.lock().await;
-            if let Some(c) = pc.get(alias).cloned() {
-                break c;
+    // Poll pair_results until the bot's internal task completes pairing.
+    // The internal task (bot.rs:434) calls wait_for_socket → pair_with_code
+    // and our event handler stores the result.
+    info!("[{alias}] Waiting for pair result...");
+    let mut waited = 0u64;
+    let max_wait = 90u64;
+    loop {
+        let mgr = state.daemon.account_manager.lock().await;
+        let result = mgr.pair_results.lock().await.remove(alias);
+        drop(mgr);
+        match result {
+            Some(Ok(code)) => {
+                info!("[{alias}] Pair code generated via builder, length: {}", code.len());
+                return json_ok(&serde_json::json!({ "code": code }));
             }
-            drop(pc);
-            drop(mgr);
-            waited += 1;
-            if waited >= max_wait {
-                return json_error(500, "timeout waiting for bot client to initialize");
+            Some(Err(err)) => {
+                warn!("[{alias}] Pair failed via builder: {err}");
+                return json_error(500, &err);
             }
-            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        };
-        client
-    };
-
-    // Wait for the WebSocket to be ready
-    if let Err(e) = client.wait_for_socket(std::time::Duration::from_secs(30)).await {
-        return json_error(500, &format!("socket not ready: {e}"));
-    }
-
-    // Call pair_with_code() directly — errors propagate to the frontend
-    let options = PairCodeOptions::for_phone(&phone);
-    match client.pair_with_code(options).await {
-        Ok(code) => json_ok(&serde_json::json!({ "code": code })),
-        Err(e) => json_error(500, &format!("{:?}", e)),
+            None => {
+                waited += 1;
+                if waited >= max_wait {
+                    warn!("[{alias}] Pair result not ready after {waited}s — timeout");
+                    return json_error(500, "timeout waiting for pair result from bot");
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
     }
 }
 
@@ -260,15 +270,11 @@ pub async fn regenerate_qr(state: &Arc<ApiState>, alias: &str) -> Response<Body>
     }
 }
 
-/// Strip leading zeros from a phone number and ensure it starts with '+'.
-/// wa-rs rejects numbers starting with '0'.
+/// Strip all non-digit characters so the phone is raw digits (e.g. "256755304241").
+/// whatsapp-rust builds the JID as `{phone}@s.whatsapp.net` — a `+` prefix makes it invalid.
 fn normalize_phone(phone: &str) -> String {
-    let trimmed = phone.trim();
-    if trimmed.starts_with('+') {
-        return trimmed.to_string();
-    }
-    let stripped = trimmed.trim_start_matches('0');
-    format!("+{}", stripped)
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    digits.trim_start_matches('0').to_string()
 }
 
 // ---- helpers ----

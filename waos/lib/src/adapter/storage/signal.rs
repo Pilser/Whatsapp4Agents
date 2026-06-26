@@ -208,11 +208,28 @@ impl SignalStore for TursoStore {
         Ok(result)
     }
 
+    async fn mark_prekeys_uploaded(&self, ids: &[u32]) -> wacore::store::error::Result<()> {
+        let conn = self.conn.lock();
+        for &id in ids {
+            crate::to_store_err!(conn.execute(
+                "UPDATE prekeys SET uploaded = 1 WHERE id = ?1 AND device_id = ?2",
+                Params::Positional(vec![
+                    Value::from(id as i64),
+                    Value::from(self.device_id),
+                ]),
+            ).await.map(|_| ()))?;
+        }
+        Ok(())
+    }
+
     async fn remove_signed_prekey(&self, id: u32) -> wacore::store::error::Result<()> {
         let conn = self.conn.lock();
         crate::to_store_err!(conn.execute(
             "DELETE FROM signed_prekeys WHERE id = ?1 AND device_id = ?2",
-            Params::Positional(vec![Value::from(id as i64), Value::from(self.device_id)]),
+            Params::Positional(vec![
+                Value::from(id as i64),
+                Value::from(self.device_id),
+            ]),
         ).await.map(|_| ()))
     }
 

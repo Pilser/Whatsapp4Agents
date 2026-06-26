@@ -25,3 +25,11 @@ whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-r
 dirs = "5"
 toml = "0.8"
 rand = "0.8"
+
+[patch."https://github.com/oxidezap/whatsapp-rust"]
+whatsapp-rust = { path = "../whatsapp-rust" }
+wacore = { path = "../whatsapp-rust/wacore" }
+wacore-binary = { path = "../whatsapp-rust/wacore/binary" }
+waproto = { path = "../whatsapp-rust/waproto" }
+whatsapp-rust-tokio-transport = { path = "../whatsapp-rust/transports/tokio-transport" }
+whatsapp-rust-ureq-http-client = { path = "../whatsapp-rust/http_clients/ureq-client" }

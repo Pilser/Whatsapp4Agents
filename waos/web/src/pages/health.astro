@@ -1,0 +1,87 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Health">
+  <div class="flex items-center justify-between mb-6 sm:mb-8">
+    <h1 class="text-xl sm:text-2xl font-bold">System Health</h1>
+    <span class="text-xs text-waos-dim" id="last-update">Loading...</span>
+  </div>
+
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-8">
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Uptime</div>
+      <div class="text-lg sm:text-2xl font-bold" id="uptime">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Memory</div>
+      <div class="text-lg sm:text-2xl font-bold" id="memory">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">DB Size</div>
+      <div class="text-lg sm:text-2xl font-bold" id="disk">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Queue</div>
+      <div class="text-lg sm:text-2xl font-bold text-waos-warn" id="queue">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Msgs Received</div>
+      <div class="text-lg sm:text-2xl font-bold" id="msgs-received">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Msgs Sent</div>
+      <div class="text-lg sm:text-2xl font-bold text-waos-accent" id="msgs-sent">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Accounts</div>
+      <div class="text-lg sm:text-2xl font-bold" id="haccounts">&mdash;</div>
+    </div>
+    <div class="bg-waos-surface border border-waos-border rounded-xl p-4 sm:p-5">
+      <div class="text-xs text-waos-muted uppercase tracking-wider font-medium mb-1">Connected</div>
+      <div class="text-lg sm:text-2xl font-bold text-waos-accent" id="hconnected">&mdash;</div>
+    </div>
+  </div>
+
+  <div class="bg-waos-surface border border-waos-border rounded-xl p-5">
+    <h2 class="text-sm font-semibold mb-4">Per-Account Health</h2>
+    <div id="per-account" class="space-y-2">
+      <p class="text-waos-dim italic text-sm">Loading...</p>
+    </div>
+  </div>
+</Base>
+
+<script>
+function load() {
+  WAOS.api('/api/health').then(function(h) {
+    document.getElementById('uptime').textContent = h.uptime_seconds ? WAOS.formatDuration(h.uptime_seconds) : '&mdash;';
+    document.getElementById('memory').textContent = h.memory_usage_mb ? h.memory_usage_mb + ' MB' : '&mdash;';
+    document.getElementById('disk').textContent = h.db_size_mb ? h.db_size_mb + ' MB' : '&mdash;';
+    document.getElementById('queue').textContent = h.outbound_queue_depth != null ? h.outbound_queue_depth : '&mdash;';
+    document.getElementById('msgs-received').textContent = h.messages_received_today != null ? h.messages_received_today : '&mdash;';
+    document.getElementById('msgs-sent').textContent = h.messages_sent_today != null ? h.messages_sent_today : '&mdash;';
+    document.getElementById('haccounts').textContent = h.accounts_total != null ? h.accounts_total : '&mdash;';
+    document.getElementById('hconnected').textContent = h.accounts_connected != null ? h.accounts_connected : '&mdash;';
+    document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+
+    var pa = document.getElementById('per-account');
+    if (h.accounts_health) {
+      pa.innerHTML = Object.keys(h.accounts_health).map(function(alias) {
+        var info = h.accounts_health[alias];
+        return '<div class="flex items-center justify-between text-sm py-1.5 border-b border-waos-border last:border-0">' +
+          '<span class="font-medium">' + alias + '</span>' +
+          '<span class="text-waos-dim">' + info.connection + ' &middot; ' + (info.disconnected_count_24h || 0) + ' disconnects/24h</span></div>';
+      }).join('');
+    } else {
+      pa.innerHTML = '<p class="text-sm text-waos-dim italic">No accounts</p>';
+    }
+  }).catch(function() {
+    ['uptime','memory','disk','queue','msgs-received','msgs-sent','haccounts','hconnected'].forEach(function(id) {
+      document.getElementById(id).textContent = '&mdash;';
+    });
+    document.getElementById('last-update').textContent = 'Failed';
+  });
+}
+load();
+setInterval(load, 15000);
+</script>
