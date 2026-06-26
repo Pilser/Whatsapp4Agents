@@ -1,0 +1,28 @@
+[package]
+name = "waos"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+waos-core = { path = "../core" }
+waos-lib = { path = "../lib" }
+waos-db = { path = "../db" }
+clap = { version = "4", features = ["derive"] }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+turso = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+whatsapp-rust = { workspace = true }
+
+# Management API server (Phase 6)
+hyper = { version = "0.14", features = ["server", "http1", "tcp", "stream"] }
+mime_guess = "2"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"

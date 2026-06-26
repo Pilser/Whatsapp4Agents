@@ -1,0 +1,30 @@
+[package]
+name = "waos-lib"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+waos-core = { path = "../core" }
+waos-db = { path = "../db" }
+turso = { workspace = true }
+whatsapp-rust = { workspace = true }
+wacore = { workspace = true }
+wacore-binary = { workspace = true }
+waproto = { workspace = true }
+whatsapp-rust-tokio-transport = { workspace = true }
+whatsapp-rust-ureq-http-client = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+ureq = "2"
+async-trait = "0.1"
+parking_lot = "0.12"
+bytes = "1"
+prost = "0.14"
+dirs = { workspace = true }
+toml = { workspace = true }
+rand = { workspace = true }

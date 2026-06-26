@@ -1,0 +1,22 @@
+# Ignore everything by default
+*
+
+# But allow these files and directories
+!.gitignore
+!AGENTS.md
+!AGENTSxx.md
+!WAOSPlan.md
+!WAOSPlan.md
+!README.md
+!Initial-blue-print.md
+
+# Allow source code directory
+#!src/
+#!src/**
+
+# Allow waos project, but still ignore its build and dependencies
+!waos/
+!waos/**
+waos/target/
+waos/**/node_modules/
+
