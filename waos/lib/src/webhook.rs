@@ -1,5 +1,11 @@
 use waos_core::events::WaosEvent;
 
+fn sanitize_key(raw: &str) -> String {
+    raw.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' || c == '.' { c } else { '_' })
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct WebhookPush {
     agent_url: String,
@@ -29,16 +35,42 @@ impl WebhookPush {
         )
     }
 
+    fn build_session_key(account: &str, chat_id: &str, sender: &str) -> String {
+        sanitize_key(&format!("whatsapp.{account}_{chat_id}_{sender}"))
+    }
+
     async fn send_notification(&self, event: &WaosEvent) {
-        let account = match event {
-            WaosEvent::NewMessage { account, .. } => account,
-            WaosEvent::MentionReceived { account, .. } => account,
+        let (account, chat_id, sender_jid, sender_name, content, is_group, message_type, has_media) = match event {
+            WaosEvent::NewMessage {
+                account, chat_id, sender_jid, sender_name,
+                content, is_group, message_type, has_media, ..
+            } => (
+                account.as_str(), chat_id.as_str(), sender_jid.as_str(),
+                sender_name.as_str(), content.as_str(), *is_group,
+                message_type.as_str(), *has_media,
+            ),
+            WaosEvent::MentionReceived { account, chat_id, sender_name, message_snippet, .. } => {
+                (account.as_str(), chat_id.as_str(), "",
+                 sender_name.as_str(), message_snippet.as_str(),
+                 false, "mention", false)
+            }
             _ => return,
         };
 
+        let session_key = Self::build_session_key(account, chat_id, sender_jid);
         let body = serde_json::json!({
-            "message": "new_whatsapp_activity",
+            "event": "new_whatsapp_activity",
             "account": account,
+            "channel": "whatsapp",
+            "channel_alias": account,
+            "session_key": session_key,
+            "chat_id": chat_id,
+            "sender": sender_jid,
+            "sender_name": sender_name,
+            "content": content,
+            "is_group": is_group,
+            "message_type": message_type,
+            "has_media": has_media,
         });
 
         let body_str = serde_json::to_string(&body).unwrap_or_default();

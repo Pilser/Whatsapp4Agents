@@ -9,7 +9,7 @@ use tracing::{error, info, warn};
 use turso::Connection;
 
 use waos_core::events::WaosEvent;
-use waos_db::DbManager;
+use waos_db::{DbManager, wa_version};
 use waos_lib::adapter::account_manager::AccountManager;
 use waos_lib::attention::AttentionEngine;
 use waos_lib::bridge::anti_ban::AntiBan;
@@ -37,8 +37,6 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
     let dash_path = config.dashboard_path();
     let delta_path = config.dashboard_delta_path();
 
-    info!("WAOS daemon starting, data dir: {}", data_dir.display());
-
     tokio::fs::create_dir_all(&data_dir).await?;
     tokio::fs::create_dir_all(&accounts_dir).await?;
     tokio::fs::create_dir_all(&sessions_dir).await?;
@@ -48,7 +46,53 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
     let db_mgr = Arc::new(Mutex::new(
         DbManager::open(&main_db_path, &accounts_dir, &sessions_dir).await?
     ));
-    let account_manager = Arc::new(Mutex::new(AccountManager::new()));
+
+    // Resolve WA version: try CDN → fallback DB → fallback config
+    let mut dev_cfg = config.device.clone();
+    let main_conn = db_mgr.lock().await.open_main_conn()?;
+    let fetch_result = tokio::task::spawn_blocking(waos_lib::version_fetch::fetch_wa_version).await;
+    let version_source = match fetch_result {
+        Ok(Ok(fetched)) => {
+            let now = chrono::Utc::now().timestamp();
+            wa_version::write_wa_version(
+                &main_conn,
+                &wa_version::WaVersion {
+                    primary: fetched.primary,
+                    secondary: fetched.secondary,
+                    tertiary: fetched.tertiary,
+                    fetched_at: now,
+                },
+            )
+            .await;
+            dev_cfg.version_primary = fetched.primary as u32;
+            dev_cfg.version_secondary = fetched.secondary as u32;
+            dev_cfg.version_tertiary = fetched.tertiary as u32;
+            format!("{fetched}, fetched from CDN")
+        }
+        Ok(Err(fetch_err)) => {
+            match wa_version::read_wa_version(&main_conn).await {
+                Some(cached) => {
+                    dev_cfg.version_primary = cached.primary as u32;
+                    dev_cfg.version_secondary = cached.secondary as u32;
+                    dev_cfg.version_tertiary = cached.tertiary as u32;
+                    format!("{}.{}.{}, DB cache (fetch failed: {fetch_err})", cached.primary, cached.secondary, cached.tertiary)
+                }
+                None => {
+                    format!("{}.{}.{}, config default (fetch failed: {fetch_err}, no cached version)",
+                        dev_cfg.version_primary, dev_cfg.version_secondary, dev_cfg.version_tertiary)
+                }
+            }
+        }
+        Err(join_err) => {
+            warn!("Version fetch task panicked: {join_err}, falling back to config default");
+            format!("{}.{}.{}, config default (fetch panicked)", dev_cfg.version_primary, dev_cfg.version_secondary, dev_cfg.version_tertiary)
+        }
+    };
+    drop(main_conn);
+
+    info!("WAOS daemon starting, data dir: {}, version: {version_source}", data_dir.display());
+
+    let account_manager = Arc::new(Mutex::new(AccountManager::new(dev_cfg)));
 
     // Resolve accounts from main DB. On first run (DB empty) this bootstraps
     // from config `[[accounts]]`. After that, all account management is
@@ -58,12 +102,18 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
 
     // Phase 2 subsystems
     let mut dashboard = DashboardWriter::new(&dash_path, &delta_path);
-    dashboard.set_main_conn(db_mgr.lock().await.main_conn.clone());
+    // Each background subsystem gets its own main DB connection to avoid
+    // turso's ConcurrentGuard "concurrent use forbidden" error.
+    dashboard.set_main_conn(db_mgr.lock().await.open_main_conn()?);
     let attention = AttentionEngine::new();
 
     // Phase 3 subsystems
     let anti_ban = Arc::new(AntiBan::new(
-        db_mgr.lock().await.main_conn.clone()
+        db_mgr.lock().await.open_main_conn()?,
+        config.anti_ban.hourly_cap,
+        config.anti_ban.daily_cap,
+        config.anti_ban.pacer_min_delay_ms,
+        config.anti_ban.pacer_jitter_ms,
     ));
     let db_conns: Arc<tokio::sync::Mutex<HashMap<String, Connection>>> =
         Arc::new(tokio::sync::Mutex::new(HashMap::new()));
@@ -132,7 +182,11 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
 
         let conn = db_mgr.lock().await.open_account_db(alias).await?;
 
-        sync_engine.register_account(alias, conn.clone()).await;
+        // Open a separate connection for sync engine (HistorySync processing)
+        // to avoid turso's ConcurrentGuard "concurrent use forbidden" error
+        // when the bot and HistorySync try to use the same connection at once.
+        let sync_conn = db_mgr.lock().await.open_account_db_fresh(alias).await?;
+        sync_engine.register_account(alias, sync_conn).await;
         dashboard.register_account(alias, conn.clone()).await;
         attention.register_account(alias, conn.clone()).await;
         scoring.register_account(alias, conn.clone()).await;
@@ -144,6 +198,19 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
             vm.register_account(alias, conn.clone()).await;
         }
         db_conns.lock().await.insert(alias.clone(), conn);
+
+        // Dedicated HistorySync connection — separate from SyncEngine's pool
+        // so HistorySync processing doesn't contend with event_processor
+        // on the same turso ConcurrentGuard. Must be inserted BEFORE the
+        // bot starts (add_account spawns run_bot).
+        let history_conn = db_mgr.lock().await.open_account_db_fresh(alias).await?;
+        account_manager
+            .lock()
+            .await
+            .history_conns
+            .lock()
+            .await
+            .insert(alias.clone(), history_conn);
 
         account_manager
             .lock()
@@ -168,6 +235,22 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
                         if let Err(e) = dash.write_delta(&event).await {
                             error!("Dashboard delta write failed: {e}");
                         }
+                        // Handle logged_out: clear all pending outbound messages
+                        // and let the agent get immediate rejection on new sends.
+                        if let WaosEvent::AccountStatusUpdate { account, status } = &event {
+                            if status == "logged_out" {
+                                if let Ok(conn) = db.lock().await.open_account_db_fresh(account).await {
+                                    let deleted = conn.execute(
+                                        "DELETE FROM outbound_queue WHERE status = 'pending'",
+                                        (),
+                                    ).await.unwrap_or(0);
+                                    if deleted > 0 {
+                                        info!("Cleared {deleted} pending messages for logged-out account '{account}'");
+                                    }
+                                }
+                            }
+                        }
+
                         // Sync live connection status to the main DB so the
                         // REST API returns accurate status without polling.
                         if let Some((alias, status, error)) = match &event {
@@ -416,7 +499,11 @@ impl DaemonState {
         }
         self.db_conns.lock().await.insert(alias.to_string(), conn);
 
-        // 4. Start Bot
+        // 4. Dedicated HistorySync connection (BEFORE starting bot)
+        let history_conn = self.db_mgr.lock().await.open_account_db_fresh(alias).await?;
+        self.account_manager.lock().await.history_conns.lock().await.insert(alias.to_string(), history_conn);
+
+        // 5. Start Bot
         let phone_owned = phone.map(String::from);
         self.account_manager.lock().await
             .add_account_with_phone(alias, &self.sessions_dir, &self.event_bus, phone_owned)
@@ -438,6 +525,7 @@ impl DaemonState {
         self.db_conns.lock().await.remove(alias);
 
         // 3. Unregister from all subsystems
+        self.account_manager.lock().await.history_conns.lock().await.remove(alias);
         self.sync_engine.remove_account(alias).await;
         self.dashboard.remove_account(alias).await;
         self.attention.remove_account(alias).await;
@@ -478,6 +566,32 @@ impl DaemonState {
 
         info!("Account '{}' destroyed", alias);
         Ok(())
+    }
+
+    /// Check if an account is in logged_out state by querying the main DB.
+    /// Returns true if the account status is 'logged_out'.
+    pub async fn is_account_logged_out(&self, alias: &str) -> bool {
+        let lock = self.db_mgr.lock().await;
+        let mut rows = match lock.main_conn.query(
+            "SELECT status FROM accounts WHERE alias = ?1",
+            turso::params::Params::Positional(vec![turso::Value::from(alias)]),
+        ).await {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        match rows.next().await {
+            Ok(Some(row)) => matches!(row.get_value(0), Ok(turso::Value::Text(s)) if s == "logged_out"),
+            _ => false,
+        }
+    }
+
+    /// Reject if account is logged_out. Returns an error message if blocked.
+    pub async fn reject_if_logged_out(&self, alias: &str) -> Result<(), String> {
+        if self.is_account_logged_out(alias).await {
+            Err(format!("Account '{alias}' is logged out. Re-pair before sending messages."))
+        } else {
+            Ok(())
+        }
     }
 }
 

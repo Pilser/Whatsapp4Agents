@@ -1,97 +1,12 @@
-# =============================================================================
-# WAOS — WhatsApp Agent Operating System Configuration
-# =============================================================================
-# Place this file at:
-#   1. ./config.toml           (local — highest priority, checked first)
-#   2. ./.env                  (local — alternative format, checked second)
-#   3. $XDG_CONFIG_HOME/waos/config.toml  (system — lowest priority)
-# =============================================================================
+[device]
+os = "macOS"
+platform_type = "Chrome"
+version_primary = 2
+version_secondary = 3000
+version_tertiary = 1042249440
 
-# ---------------------------------------------------------------------------
-# [paths] — All file-system paths. Every field is optional; unset values
-#           fall back to <data_dir>/<subdirectory>.
-# ---------------------------------------------------------------------------
-[paths]
-# Base data directory. All other paths inherit from here.
-data_dir = "./srv/waos"
-
-# Per-account database directory. Default: <data_dir>/accounts
-accounts_dir = "./srv/waos/accounts"
-
-# wa-rs session storage directory. Default: <data_dir>/sessions
-sessions_dir = "./srv/waos/sessions"
-
-# Media cache directory. Default: <data_dir>/media
-media_dir = "./srv/waos/media"
-
-# Frontend SPA dist directory (Phase 6). Default: <data_dir>/web
-frontend_dir = "./srv/waos/web"
-
-# Main database path. Default: <data_dir>/waos.db
-main_db = "./srv/waos/waos.db"
-
-# Dashboard JSON output. Default: <data_dir>/dashboard.json
-dashboard = "./srv/waos/dashboard.json"
-
-# Dashboard delta stream. Default: <data_dir>/dashboard.delta
-dashboard_delta = "./srv/waos/dashboard.delta"
-
-# ---------------------------------------------------------------------------
-# [server] — Management HTTP API (Phase 6, optional)
-# ---------------------------------------------------------------------------
-[server]
-enabled = true
-port = 8080
-bind = "127.0.0.1"
-no_frontend = false
-
-# JWT secret for API authentication. Must be set for write endpoints
-# (POST/DELETE accounts). If empty, the API only allows read-only endpoints.
-# Generate one with: openssl rand -base64 32
-jwt_secret = "changeme-generate-a-real-secret-with-openssl-rand-base64-32"
-
-# ---------------------------------------------------------------------------
-# [[accounts]] — WhatsApp accounts (BOOTSTRAP ONLY).
-# Accounts are managed via the REST API / main DB.
-# This section is only read on the very first run when the DB is empty.
-# After that, use the web UI or API to add/remove accounts.
-# ---------------------------------------------------------------------------
-[[accounts]]
-alias = "default"
-phone = ""
-
-# ---------------------------------------------------------------------------
-# [agent] — Agent gateway, webhook, and embedding provider
-# ---------------------------------------------------------------------------
-[agent]
-# webhook_token — Bearer token sent in Authorization header
-webhook_token = "your-webhook-secret"
-
-# --- Embedding provider for semantic search (Phase 5) ---
-# Provider type. Supported values:
-#   "openai"                          — OpenAI API (api.openai.com)
-#   "openrouter"                      — OpenRouter API
-#   "custom:http://host:port"         — Any OpenAI-compatible local endpoint
-#                                       (e.g. Ollama, LocalAI, vLLM)
-#   Comment out or omit to disable semantic search (NoopEmbedding).
-#
-# Examples:
-#   embedding_provider = "openai"
-#   embedding_provider = "openrouter"
-#   embedding_provider = "custom:http://localhost:11434"       # Ollama
-#   embedding_provider = "custom:http://192.168.1.50:8080/v1"  # LocalAI
-embedding_provider = "custom:http://localhost:11434"
-
-# Model name sent in the request body. For local providers this must match
-# whatever model name your server expects (e.g. "nomic-embed-text" for Ollama).
-embedding_model = "nomic-embed-text"
-
-# Output dimensions (must match model).
-#   text-embedding-3-small  → 1536
-#   nomic-embed-text        → 768
-#   BGE-small-en-v1.5       → 384
-embedding_dimensions = 768
-
-# API key for the embedding provider. Many local servers accept any non-empty
-# value or ignore it entirely. Required for OpenAI/OpenRouter.
-embedding_api_key = "sk-your-api-key"
+[anti_ban]
+hourly_cap = 80
+daily_cap = 800
+pacer_min_delay_ms = 2000
+pacer_jitter_ms = 1000

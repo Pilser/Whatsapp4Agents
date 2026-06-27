@@ -31,16 +31,32 @@ async fn open_conn(alias: &str) -> anyhow::Result<turso::Connection> {
 
 #[derive(Subcommand)]
 pub enum ContactCommand {
-    Search { query: String },
-    Info { jid: String },
-    Score { jid: String, value: f64 },
+    Search {
+        query: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Info {
+        jid: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Score {
+        jid: String,
+        value: f64,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
 }
 
 pub async fn run(alias: &str, cmd: ContactCommand) -> anyhow::Result<()> {
     match cmd {
-        ContactCommand::Search { query } => search(alias, &query).await,
-        ContactCommand::Info { jid } => info(alias, &jid).await,
-        ContactCommand::Score { jid, value } => set_score(alias, &jid, value).await,
+        ContactCommand::Search { query, .. } => search(alias, &query).await,
+        ContactCommand::Info { jid, .. } => info(alias, &jid).await,
+        ContactCommand::Score { jid, value, .. } => set_score(alias, &jid, value).await,
     }
 }
 

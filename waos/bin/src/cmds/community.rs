@@ -18,14 +18,23 @@ async fn open_conn(alias: &str) -> anyhow::Result<turso::Connection> {
 
 #[derive(Subcommand)]
 pub enum CommunityCommand {
-    List,
-    Info { community_id: String },
+    List {
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Info {
+        community_id: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
 }
 
 pub async fn run(alias: &str, cmd: CommunityCommand) -> anyhow::Result<()> {
     match cmd {
-        CommunityCommand::List => list(alias).await,
-        CommunityCommand::Info { community_id } => info(alias, &community_id).await,
+        CommunityCommand::List { .. } => list(alias).await,
+        CommunityCommand::Info { community_id, .. } => info(alias, &community_id).await,
     }
 }
 

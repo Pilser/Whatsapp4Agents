@@ -14,16 +14,32 @@ async fn open_conn(alias: &str) -> anyhow::Result<turso::Connection> {
 
 #[derive(Subcommand)]
 pub enum GraphCommand {
-    SharedGroups { jid1: String, jid2: String },
-    Introductions { jid: String },
-    ImportantContacts { community_id: String },
+    SharedGroups {
+        jid1: String,
+        jid2: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Introductions {
+        jid: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    ImportantContacts {
+        community_id: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
 }
 
 pub async fn run(alias: &str, cmd: GraphCommand) -> anyhow::Result<()> {
     match cmd {
-        GraphCommand::SharedGroups { jid1, jid2 } => shared_groups(alias, &jid1, &jid2).await,
-        GraphCommand::Introductions { jid } => introductions(alias, &jid).await,
-        GraphCommand::ImportantContacts { community_id } => important_contacts(alias, &community_id).await,
+        GraphCommand::SharedGroups { jid1, jid2, .. } => shared_groups(alias, &jid1, &jid2).await,
+        GraphCommand::Introductions { jid, .. } => introductions(alias, &jid).await,
+        GraphCommand::ImportantContacts { community_id, .. } => important_contacts(alias, &community_id).await,
     }
 }
 

@@ -25,16 +25,22 @@ pub enum TaskCommand {
     List {
         #[arg(long)]
         status: Option<String>,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
     },
     Complete {
         task_id: usize,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
     },
 }
 
 pub async fn run(cmd: TaskCommand) -> anyhow::Result<()> {
     match cmd {
-        TaskCommand::List { status } => list(status.as_deref()).await,
-        TaskCommand::Complete { task_id } => complete(task_id).await,
+        TaskCommand::List { status, .. } => list(status.as_deref()).await,
+        TaskCommand::Complete { task_id, .. } => complete(task_id).await,
     }
 }
 

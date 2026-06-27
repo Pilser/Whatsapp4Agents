@@ -42,12 +42,12 @@ impl SendPacer {
 }
 
 impl AntiBan {
-    pub fn new(main_conn: Connection) -> Self {
+    pub fn new(main_conn: Connection, hourly_cap: u32, daily_cap: u32, pacer_min_delay_ms: u64, pacer_jitter_ms: u64) -> Self {
         Self {
             main_conn,
-            hourly_cap: 80,
-            daily_cap: 800,
-            pacer: SendPacer::new(2000, 1000),
+            hourly_cap,
+            daily_cap,
+            pacer: SendPacer::new(pacer_min_delay_ms, pacer_jitter_ms),
             cooldown_until: Arc::new(Mutex::new(None)),
         }
     }

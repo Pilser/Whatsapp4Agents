@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS health_log (
     details TEXT,
     timestamp INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS wa_version (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    primary_v INTEGER NOT NULL,
+    secondary_v INTEGER NOT NULL,
+    tertiary_v INTEGER NOT NULL,
+    fetched_at INTEGER NOT NULL
+);
 ";
 
 pub async fn migrate_accounts(conn: &turso::Connection) {

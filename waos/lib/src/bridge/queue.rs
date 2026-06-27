@@ -111,8 +111,12 @@ impl OutboundQueue {
     async fn dequeue_pending(&self) -> Vec<QueueItem> {
         let mut all_items = Vec::new();
         let conns = self.db_conns.lock().await;
+        let clients = self.clients.lock().await;
 
         for (alias, conn) in conns.iter() {
+            if !clients.contains_key(alias) {
+                continue;
+            }
             let mut rows = match conn.query(
                 "SELECT id, chat_id, content, media_path, media_mime, quoted_message_id, priority, created_at, media_type, metadata
                  FROM outbound_queue WHERE status = 'pending'
@@ -257,6 +261,7 @@ impl OutboundQueue {
             _ => {}
         }
 
+        self.anti_ban.pacer().wait().await;
         let msg = if item.content.starts_with("REACTION:") {
             let parts: Vec<&str> = item.content.splitn(3, ':').collect();
             if parts.len() < 3 {
@@ -276,7 +281,6 @@ impl OutboundQueue {
             }
             sender::make_delete_message(parts[1])
         } else if let Some(ref media_path) = item.media_path {
-            self.anti_ban.pacer().wait().await;
             let media_category = if !item.media_type.is_empty() {
                 item.media_type.as_str()
             } else {
@@ -291,11 +295,9 @@ impl OutboundQueue {
                 .map_err(|e| anyhow::anyhow!("Media send failed: {e}"));
         } else if let Some(ref quote_id) = item.quoted_message_id {
             self.typing.simulate(client, chat_jid).await;
-            self.anti_ban.pacer().wait().await;
             sender::make_reply_message(&item.content, quote_id)
         } else {
             self.typing.simulate(client, chat_jid).await;
-            self.anti_ban.pacer().wait().await;
             sender::make_text_message(&item.content)
         };
 
@@ -309,6 +311,7 @@ impl OutboundQueue {
         let meta: serde_json::Value = serde_json::from_str(&item.metadata).unwrap_or_default();
         let bg = meta.get("bg").and_then(|v| u32::from_str_radix(&v.as_str().unwrap_or("FF1E6E4F").trim_start_matches("0x"), 16).ok()).unwrap_or(0xFF1E6E4F);
         let font = meta.get("font").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        self.anti_ban.pacer().wait().await;
         client.status().send_text(&item.content, bg, font, &recipients, StatusSendOptions::default())
             .await.map_err(|e| anyhow::anyhow!("Status text send failed: {e}"))
     }
@@ -328,6 +331,7 @@ impl OutboundQueue {
         let upload = client.upload(data, MediaType::Image, UploadOptions::default()).await?;
         let recipients = self.get_all_contacts(&item.account).await;
         let caption = if item.content.is_empty() { None } else { Some(item.content.as_str()) };
+        self.anti_ban.pacer().wait().await;
         client.status().send_image(upload, thumbnail, caption, &recipients, StatusSendOptions::default())
             .await.map_err(|e| anyhow::anyhow!("Status image send failed: {e}"))
     }
@@ -347,6 +351,7 @@ impl OutboundQueue {
         let upload = client.upload(data, MediaType::Video, UploadOptions::default()).await?;
         let recipients = self.get_all_contacts(&item.account).await;
         let caption = if item.content.is_empty() { None } else { Some(item.content.as_str()) };
+        self.anti_ban.pacer().wait().await;
         client.status().send_video(upload, thumbnail, 30, caption, &recipients, StatusSendOptions::default())
             .await.map_err(|e| anyhow::anyhow!("Status video send failed: {e}"))
     }
@@ -354,6 +359,7 @@ impl OutboundQueue {
     async fn send_status_revoke(&self, client: &Client, item: &QueueItem) -> anyhow::Result<SendResult> {
         use whatsapp_rust::features::StatusSendOptions;
         let recipients = self.get_all_contacts(&item.account).await;
+        self.anti_ban.pacer().wait().await;
         client.status().revoke(&item.content, &recipients, StatusSendOptions::default())
             .await.map_err(|e| anyhow::anyhow!("Status revoke failed: {e}"))
     }

@@ -597,6 +597,9 @@ async fn cmd_chat_search(state: &DaemonState, alias: &str, query: &str) -> IpcRe
 }
 
 async fn cmd_message_send(state: &DaemonState, alias: &str, chat_id: &str, text: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -739,6 +742,9 @@ async fn cmd_chat_mark_read(state: &DaemonState, alias: &str, chat_id: &str) -> 
 }
 
 async fn cmd_message_reply(state: &DaemonState, alias: &str, chat_id: &str, reply_to_id: &str, text: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -765,6 +771,9 @@ async fn cmd_message_reply(state: &DaemonState, alias: &str, chat_id: &str, repl
 }
 
 async fn cmd_message_react(state: &DaemonState, alias: &str, chat_id: &str, message_id: &str, emoji: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -791,6 +800,9 @@ async fn cmd_message_react(state: &DaemonState, alias: &str, chat_id: &str, mess
 }
 
 async fn cmd_message_edit(state: &DaemonState, alias: &str, chat_id: &str, message_id: &str, text: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -817,6 +829,9 @@ async fn cmd_message_edit(state: &DaemonState, alias: &str, chat_id: &str, messa
 }
 
 async fn cmd_message_delete(state: &DaemonState, alias: &str, chat_id: &str, message_id: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -845,6 +860,9 @@ async fn cmd_message_delete(state: &DaemonState, alias: &str, chat_id: &str, mes
 // ── Media ─────────────────────────────────────────────────────────────────
 
 async fn cmd_media_send(state: &DaemonState, alias: &str, chat_id: &str, file_path: &str, caption: Option<&str>, reply_to: Option<&str>, as_document: bool, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let path = std::path::PathBuf::from(file_path);
     if !path.exists() {
         return IpcResponse::err(format!("File not found: {file_path}"));
@@ -929,6 +947,9 @@ async fn cmd_media_download(state: &DaemonState, alias: &str, message_id: &str) 
 // ── Status ────────────────────────────────────────────────────────────────
 
 async fn cmd_status_send_text(state: &DaemonState, alias: &str, text: &str, metadata: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),
@@ -954,6 +975,9 @@ async fn cmd_status_send_text(state: &DaemonState, alias: &str, text: &str, meta
 }
 
 async fn cmd_status_send_media(state: &DaemonState, alias: &str, file_path: &str, caption: Option<&str>, metadata: Option<&str>, media_type: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let path = std::path::PathBuf::from(file_path);
     if !path.exists() {
         return IpcResponse::err(format!("File not found: {file_path}"));
@@ -1005,6 +1029,9 @@ async fn cmd_status_send_media(state: &DaemonState, alias: &str, file_path: &str
 }
 
 async fn cmd_status_revoke(state: &DaemonState, alias: &str, message_id: &str, wait: bool, timeout: u64) -> IpcResponse {
+    if let Err(e) = state.reject_if_logged_out(alias).await {
+        return IpcResponse::err(e);
+    }
     let conn = match open_account_conn(state, alias).await {
         Ok(c) => c,
         Err(e) => return IpcResponse::err(e),

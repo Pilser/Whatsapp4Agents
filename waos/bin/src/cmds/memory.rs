@@ -21,16 +21,32 @@ async fn open_conn(alias: &str) -> anyhow::Result<turso::Connection> {
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
-    Get { chat_id: String },
-    Set { chat_id: String, json: String },
-    Search { query: String },
+    Get {
+        chat_id: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Set {
+        chat_id: String,
+        json: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
+    Search {
+        query: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
 }
 
 pub async fn run(alias: &str, cmd: MemoryCommand) -> anyhow::Result<()> {
     match cmd {
-        MemoryCommand::Get { chat_id } => get(alias, &chat_id).await,
-        MemoryCommand::Set { chat_id, json } => set(alias, &chat_id, &json).await,
-        MemoryCommand::Search { query } => search(alias, &query).await,
+        MemoryCommand::Get { chat_id, .. } => get(alias, &chat_id).await,
+        MemoryCommand::Set { chat_id, json, .. } => set(alias, &chat_id, &json).await,
+        MemoryCommand::Search { query, .. } => search(alias, &query).await,
     }
 }
 

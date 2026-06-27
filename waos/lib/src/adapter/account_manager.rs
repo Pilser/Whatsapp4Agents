@@ -19,7 +19,9 @@ use wacore::types::events::Event;
 use waproto::whatsapp::device_props::PlatformType;
 
 use crate::adapter::storage::TursoStore;
+use crate::adapter::storage::Connection;
 use crate::bridge::mention_detector;
+use crate::config::DeviceConfig;
 use crate::event_bus::EventBus;
 use crate::sync_engine::SyncEngine;
 use waos_core::events::WaosEvent;
@@ -107,6 +109,8 @@ pub struct AccountManager {
     pub qr_codes: Arc<Mutex<HashMap<String, String>>>,
     pub pair_results: Arc<Mutex<HashMap<String, Result<String, String>>>>,
     pub sync_engine: Option<SyncEngine>,
+    pub history_conns: Arc<Mutex<HashMap<String, Connection>>>,
+    device_config: DeviceConfig,
 }
 
 struct AccountHandle {
@@ -116,7 +120,7 @@ struct AccountHandle {
 }
 
 impl AccountManager {
-    pub fn new() -> Self {
+    pub fn new(device_config: DeviceConfig) -> Self {
         Self {
             handles: HashMap::new(),
             clients: Arc::new(Mutex::new(HashMap::new())),
@@ -124,6 +128,8 @@ impl AccountManager {
             qr_codes: Arc::new(Mutex::new(HashMap::new())),
             pair_results: Arc::new(Mutex::new(HashMap::new())),
             sync_engine: None,
+            history_conns: Arc::new(Mutex::new(HashMap::new())),
+            device_config,
         }
     }
 
@@ -156,10 +162,12 @@ impl AccountManager {
         let qr_codes = self.qr_codes.clone();
         let pair_results = self.pair_results.clone();
         let sync = self.sync_engine.clone();
+        let history_conns = self.history_conns.clone();
         let phone_owned = phone.clone();
+        let dev_cfg = self.device_config.clone();
 
         let bot_handle = tokio::spawn(async move {
-            Self::run_bot(&alias_owned, &session_path, eb, cancel_clone, clients, pending_clients, qr_codes, pair_results, phone_owned, sync).await;
+            Self::run_bot(&alias_owned, &session_path, eb, cancel_clone, clients, pending_clients, qr_codes, pair_results, phone_owned, sync, history_conns, dev_cfg).await;
         });
 
         self.handles.insert(
@@ -187,6 +195,8 @@ impl AccountManager {
         pair_results: Arc<Mutex<HashMap<String, Result<String, String>>>>,
         phone: Option<String>,
         sync_engine: Option<SyncEngine>,
+        history_conns: Arc<Mutex<HashMap<String, Connection>>>,
+        device_config: DeviceConfig,
     ) {
         const MAX_RETRIES: u32 = 10;
         let retry_count = Arc::new(AtomicU32::new(0));
@@ -256,6 +266,17 @@ impl AccountManager {
             let qr_codes_clone = qr_codes.clone();
             let pair_results_clone = pair_results.clone();
             let sync_clone = sync_engine.clone();
+            let hc_clone = history_conns.clone();
+
+            let platform = match device_config.platform_type.as_str() {
+                "Chrome" => PlatformType::Chrome,
+                "Firefox" => PlatformType::Firefox,
+                "Safari" => PlatformType::Safari,
+                "Edge" => PlatformType::Edge,
+                "Opera" => PlatformType::Opera,
+                "Desktop" => PlatformType::Desktop,
+                _ => PlatformType::Chrome,
+            };
 
             let mut builder = Bot::builder()
                 .with_backend_arc(backend)
@@ -264,8 +285,14 @@ impl AccountManager {
                 .with_runtime(TokioRuntime)
                 .with_device_props(
                     DevicePropsOverride::new()
-                        .with_os("WAOS")
-                        .with_platform_type(PlatformType::Desktop),
+                        .with_os(&device_config.os)
+                        .with_platform_type(platform)
+                        .with_version(waproto::whatsapp::device_props::AppVersion {
+                            primary: Some(device_config.version_primary),
+                            secondary: Some(device_config.version_secondary),
+                            tertiary: Some(device_config.version_tertiary),
+                            ..Default::default()
+                        }),
                 );
 
             // Pair code is handled by a spawned task after bot.spawn() — not via
@@ -288,6 +315,7 @@ impl AccountManager {
                         let qr_clone = qr.clone();
                         let pr = pair_results_clone.clone();
                         let sync = sync_clone.clone();
+                        let hc = hc_clone.clone();
                         async move {
                             match &*event {
                                 Event::Connected(_) => {
@@ -339,6 +367,10 @@ impl AccountManager {
                                     sr.store(true, Ordering::Relaxed);
                                     cl.lock().await.remove(&a);
                                     warn!("[{a}] Session revoked");
+                                    e.publish(WaosEvent::AccountStatusUpdate {
+                                        account: a.clone(),
+                                        status: "logged_out".to_string(),
+                                    });
                                     let _ = lt.send(());
                                 }
                                 Event::StreamError(err) => {
@@ -485,7 +517,8 @@ impl AccountManager {
                                 // === Tier 1: Critical ===
                                 Event::HistorySync(lazy_hs) => {
                                     if let Some(sync) = &sync {
-                                        match sync.get_connection(&a).await {
+                                        let conn = hc.lock().await.get(&a).cloned();
+                                        match conn {
                                             Some(conn) => {
                                                 if let Some(hs) = lazy_hs.get() {
                                                     e.publish(WaosEvent::HistorySyncProgress {
@@ -755,6 +788,7 @@ impl AccountManager {
                 if let Some(parent) = session_path.parent() {
                     let _ = std::fs::remove_dir_all(parent);
                 }
+                return;
             }
 
             if network_forced {

@@ -132,6 +132,66 @@ pub struct AgentConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeviceConfig {
+    #[serde(default = "default_device_os")]
+    pub os: String,
+    #[serde(default = "default_device_platform")]
+    pub platform_type: String,
+    #[serde(default = "default_version_primary")]
+    pub version_primary: u32,
+    #[serde(default = "default_version_secondary")]
+    pub version_secondary: u32,
+    #[serde(default = "default_version_tertiary")]
+    pub version_tertiary: u32,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            os: default_device_os(),
+            platform_type: default_device_platform(),
+            version_primary: default_version_primary(),
+            version_secondary: default_version_secondary(),
+            version_tertiary: default_version_tertiary(),
+        }
+    }
+}
+
+fn default_device_os() -> String { "macOS".to_string() }
+fn default_device_platform() -> String { "Chrome".to_string() }
+fn default_version_primary() -> u32 { 2 }
+fn default_version_secondary() -> u32 { 3000 }
+fn default_version_tertiary() -> u32 { 1042249440 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AntiBanConfig {
+    #[serde(default = "default_hourly_cap")]
+    pub hourly_cap: u32,
+    #[serde(default = "default_daily_cap")]
+    pub daily_cap: u32,
+    #[serde(default = "default_pacer_min_delay")]
+    pub pacer_min_delay_ms: u64,
+    #[serde(default = "default_pacer_jitter")]
+    pub pacer_jitter_ms: u64,
+}
+
+impl Default for AntiBanConfig {
+    fn default() -> Self {
+        Self {
+            hourly_cap: default_hourly_cap(),
+            daily_cap: default_daily_cap(),
+            pacer_min_delay_ms: default_pacer_min_delay(),
+            pacer_jitter_ms: default_pacer_jitter(),
+        }
+    }
+}
+
+fn default_hourly_cap() -> u32 { 80 }
+fn default_daily_cap() -> u32 { 800 }
+fn default_pacer_min_delay() -> u64 { 2000 }
+fn default_pacer_jitter() -> u64 { 1000 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub paths: PathsConfig,
@@ -140,6 +200,10 @@ pub struct Config {
     #[serde(default = "default_accounts")]
     pub accounts: Vec<AccountConfig>,
     pub agent: Option<AgentConfig>,
+    #[serde(default)]
+    pub device: DeviceConfig,
+    #[serde(default)]
+    pub anti_ban: AntiBanConfig,
 }
 
 fn default_accounts() -> Vec<AccountConfig> {
@@ -156,6 +220,8 @@ impl Default for Config {
             server: ServerConfig::default(),
             accounts: default_accounts(),
             agent: None,
+            device: DeviceConfig::default(),
+            anti_ban: AntiBanConfig::default(),
         }
     }
 }
@@ -213,6 +279,19 @@ impl Config {
                 }),
                 (Some(base), None) => Some(base),
                 (None, over) => over,
+            },
+            device: DeviceConfig {
+                os: overlay.device.os.clone(),
+                platform_type: overlay.device.platform_type.clone(),
+                version_primary: overlay.device.version_primary,
+                version_secondary: overlay.device.version_secondary,
+                version_tertiary: overlay.device.version_tertiary,
+            },
+            anti_ban: AntiBanConfig {
+                hourly_cap: overlay.anti_ban.hourly_cap,
+                daily_cap: overlay.anti_ban.daily_cap,
+                pacer_min_delay_ms: overlay.anti_ban.pacer_min_delay_ms,
+                pacer_jitter_ms: overlay.anti_ban.pacer_jitter_ms,
             },
         }
     }

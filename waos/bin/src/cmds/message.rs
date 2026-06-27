@@ -16,39 +16,39 @@ pub enum MessageCommand {
     Send {
         chat_id: String,
         text: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     Reply {
         chat_id: String,
         reply_to_id: String,
         text: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     React {
         chat_id: String,
         message_id: String,
         emoji: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     Edit {
         chat_id: String,
         message_id: String,
         text: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     Delete {
         chat_id: String,
         message_id: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
 }

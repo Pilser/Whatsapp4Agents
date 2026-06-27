@@ -14,7 +14,11 @@ fn text_val(v: Result<turso::Value, turso::Error>) -> String {
 #[derive(Subcommand)]
 pub enum StatusCommand {
     /// List all accounts and their connection status
-    List,
+    List {
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
+    },
     /// Post a text status update (story) visible to all contacts
     SendText {
         #[arg(long)]
@@ -26,8 +30,8 @@ pub enum StatusCommand {
         /// Font style index (0-4)
         #[arg(long, default_value = "0")]
         font: i32,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     /// Post an image status update (story) visible to all contacts
@@ -41,8 +45,8 @@ pub enum StatusCommand {
         /// Optional caption
         #[arg(long)]
         caption: Option<String>,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     /// Post a video status update (story) visible to all contacts
@@ -65,8 +69,8 @@ pub enum StatusCommand {
         #[arg(long)]
         account: String,
         message_id: String,
-        /// Block and wait up to N seconds for send confirmation
-        #[arg(long)]
+        /// Block and wait up to N seconds for send confirmation (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
         wait: Option<u64>,
     },
     /// List posted status history with date range and pagination
@@ -88,6 +92,9 @@ pub enum StatusCommand {
         /// Skip N results for pagination
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
     },
     /// Delete status history entries by date range (DB cleanup, does NOT revoke from WhatsApp)
     Delete {
@@ -105,6 +112,9 @@ pub enum StatusCommand {
         /// If true, actually delete (dry-run by default)
         #[arg(long)]
         yes: bool,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
     },
 }
 
@@ -163,7 +173,7 @@ pub async fn run() -> anyhow::Result<()> {
 
 pub async fn run_cmd(account: &str, cmd: &StatusCommand) -> anyhow::Result<()> {
     match cmd {
-        StatusCommand::List => run().await,
+        StatusCommand::List { .. } => run().await,
         StatusCommand::SendText { text, bg_color, font, .. } => {
             cmd_send_text(account, text, bg_color, *font).await
         }

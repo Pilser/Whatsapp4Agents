@@ -9,6 +9,7 @@
 !WAOSPlan.md
 !README.md
 !Initial-blue-print.md
+!client-fingerprinting-comparison.md
 
 # Allow source code directory
 #!src/
@@ -24,4 +25,3 @@ waos/**/dist/
 !xwhatsapp-rust/**
 !xwhatsapp-rust/wacore/
 !xwhatsapp-rust/wacore/**
-

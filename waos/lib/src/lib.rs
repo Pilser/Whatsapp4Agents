@@ -16,4 +16,5 @@ pub mod resource_monitor;
 pub mod scoring;
 pub mod sync_engine;
 pub mod vector_memory;
+pub mod version_fetch;
 pub mod webhook;

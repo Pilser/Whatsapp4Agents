@@ -23,13 +23,16 @@ pub enum MediaCommand {
     },
     Download {
         message_id: String,
+        /// Block and wait up to N seconds for result (--wait alone defaults to 30)
+        #[arg(long, default_missing_value = "30", num_args = 0..=1)]
+        wait: Option<u64>,
     },
 }
 
 pub async fn run(alias: &str, cmd: MediaCommand) -> anyhow::Result<()> {
     match cmd {
         MediaCommand::Send { chat_id, file_path, text, reply_to, as_document, .. } => cmd_media_send(alias, &chat_id, &file_path, text.as_deref(), reply_to.as_deref(), as_document).await,
-        MediaCommand::Download { message_id } => cmd_media_download(alias, &message_id).await,
+        MediaCommand::Download { message_id, .. } => cmd_media_download(alias, &message_id).await,
     }
 }
 
