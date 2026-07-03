@@ -423,15 +423,23 @@ const { hero, examples } = landing;
     ws.onerror = function() { connected = false; streamingReset(); if (hint) hint.style.display = 'block'; };
   }
 
+  function extractMessageText(raw) {
+    if (!raw) return '';
+    if (raw.startsWith('{')) {
+      try {
+        var p = JSON.parse(raw);
+        if (p.message) return p.message;
+      } catch(e) {}
+    }
+    return raw;
+  }
+
   function fetchHistory() {
     if (!phone) return;
     var url = '/api/history?user_id=' + encodeURIComponent(phone);
-    console.log('fetchHistory: requesting', url);
     fetch(url)
       .then(function(r) { return r.json(); })
       .then(function(data) {
-        console.log('fetchHistory: got', data.messages ? data.messages.length : 0, 'messages', data);
-        // Capture session_id from history response (server knows the correct format)
         if (data.session_id && !sessionId) {
           sessionId = data.session_id;
           localStorage.setItem('zerowrapper_session', sessionId);
@@ -450,7 +458,7 @@ const { hero, examples } = landing;
             if (msg.role === 'assistant') {
               renderMarkdown(content, marked.parse(msg.content || ''));
             } else {
-              content.textContent = msg.content || '';
+              content.textContent = extractMessageText(msg.content);
             }
             row.appendChild(content);
             messages.appendChild(row);
@@ -607,17 +615,6 @@ const { hero, examples } = landing;
       status.innerHTML = '\u2713';
     }
 
-    // Render web_files_render results inline
-    if (name === 'web_files_render' && output) {
-      try {
-        var parsed = JSON.parse(output);
-        if (parsed.files && parsed.files.length > 0) {
-          renderFiles(parsed.files);
-          output = 'Rendered ' + parsed.files.length + ' file(s)'; // short status in pill
-        }
-      } catch(e) {}
-    }
-
     if (output) {
       var detail = item.el.querySelector('.tc-pill-detail');
       var existed = !!detail;
@@ -671,64 +668,11 @@ const { hero, examples } = landing;
     pendingToolCalls = [];
   }
 
-  function renderFiles(files) {
-    files.forEach(function(file) {
-      if (!file.url || !file.cached) return;
-      var row = document.createElement('div');
-      row.className = 'message-row assistant';
-      var avatar = document.createElement('div');
-      avatar.className = 'msg-avatar';
-      avatar.innerHTML = BOT_AVATAR;
-      row.appendChild(avatar);
-      var content = document.createElement('div');
-      content.className = 'msg-content chat-markdown';
-
-      var mime = file.mime_type || '';
-      var name = file.original_path.split('/').pop() || 'file';
-      if (mime.startsWith('image/')) {
-        var img = document.createElement('img');
-        img.src = file.url;
-        img.alt = name;
-        img.loading = 'lazy';
-        content.appendChild(img);
-      } else if (mime.startsWith('video/')) {
-        var video = document.createElement('video');
-        video.src = file.url;
-        video.controls = true;
-        video.preload = 'metadata';
-        content.appendChild(video);
-      } else if (mime === 'application/pdf') {
-        var iframe = document.createElement('iframe');
-        iframe.src = file.url;
-        iframe.className = 'pdf-embed';
-        iframe.title = name;
-        content.appendChild(iframe);
-      } else {
-        var a = document.createElement('a');
-        a.href = file.url;
-        a.className = 'file-embed';
-        a.target = '_blank';
-        a.innerHTML = '<span class="file-icon">&#128206;</span> ' + escapeHtml(name) + ' <span style="color:var(--color-text-weak);font-size:0.75rem;">(' + formatSize(file.file_size) + ')</span>';
-        content.appendChild(a);
-      }
-
-      row.appendChild(content);
-      messages.appendChild(row);
-      row.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    });
-  }
-
   function showTyping() { if (typingEl) typingEl.classList.add('active'); }
   function hideTyping() { if (typingEl) typingEl.classList.remove('active'); }
 
   function escapeHtml(str) {
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-
-  function formatSize(bytes) {
-    if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-    if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
-    return bytes + ' B';
   }
 
   // --- Lightbox ---

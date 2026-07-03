@@ -4,7 +4,7 @@ zeroclaw_socket = "/tmp/.zeroclaw/daemon.sock"
 # Path to local turso/SQLite database file
 db_path = "./data/zerowrapper.db"
 # Directory for content-addressed cache
-cache_dir = "./cache"
+cache_dir = "./data/cache"
 
 # Web channel — each channel has its own agent
 [zerowrapper.ch_web]

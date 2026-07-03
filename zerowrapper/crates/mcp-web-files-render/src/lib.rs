@@ -27,11 +27,11 @@ impl WebFilesRenderProvider {
 #[async_trait]
 impl McpToolProvider for WebFilesRenderProvider {
     fn name(&self) -> &str {
-        "web_files_render"
+        "generate_file_urls"
     }
 
     fn description(&self) -> &str {
-        "Render one or more local files (images, videos, PDFs, etc.) into HTTP-accessible URLs so the frontend can display them inline"
+        "Generate HTTP URLs for local files (images, videos, PDFs, etc.) so they can be embedded inline in markdown responses, e.g. ![Alt Text](/files/hash)"
     }
 
     fn input_schema(&self) -> Value {
@@ -54,6 +54,7 @@ impl McpToolProvider for WebFilesRenderProvider {
             .ok_or_else(|| anyhow::anyhow!("Missing required argument: files"))?;
 
         let mut rendered = Vec::new();
+        let mut skipped = Vec::new();
 
         for file_val in paths {
             let file_path = file_val
@@ -61,7 +62,12 @@ impl McpToolProvider for WebFilesRenderProvider {
                 .ok_or_else(|| anyhow::anyhow!("Each file entry must be a string"))?;
 
             let path = std::path::Path::new(file_path);
-            if !path.exists() {
+
+            if !path.is_absolute() {
+                skipped.push(format!(
+                    "Skipped '{}': path must be absolute (e.g. /home/user/file.jpg)",
+                    file_path
+                ));
                 rendered.push(RenderedFile {
                     url: String::new(),
                     mime_type: String::new(),
@@ -72,19 +78,50 @@ impl McpToolProvider for WebFilesRenderProvider {
                 continue;
             }
 
-            let cached = self.cache.resolve(file_path)?;
+            if !path.exists() {
+                skipped.push(format!(
+                    "Skipped '{}': file does not exist",
+                    file_path
+                ));
+                rendered.push(RenderedFile {
+                    url: String::new(),
+                    mime_type: String::new(),
+                    file_size: 0,
+                    original_path: file_path.to_string(),
+                    cached: false,
+                });
+                continue;
+            }
+
+            let cached = match self.cache.resolve(file_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    skipped.push(format!("Skipped '{}': {}", file_path, e));
+                    rendered.push(RenderedFile {
+                        url: String::new(),
+                        mime_type: String::new(),
+                        file_size: 0,
+                        original_path: file_path.to_string(),
+                        cached: false,
+                    });
+                    continue;
+                }
+            };
 
             rendered.push(RenderedFile {
                 url: format!("/files/{}", cached.hash),
                 mime_type: cached.meta.mime_type,
                 file_size: cached.meta.file_size,
-                original_path: file_path.to_string(),
+                original_path: String::new(),
                 cached: true,
             });
         }
 
-        Ok(ToolOutput::new(serde_json::json!({
-            "files": rendered
-        }).to_string()))
+        let mut result = serde_json::json!({ "files": rendered });
+        if !skipped.is_empty() {
+            result["skipped"] = serde_json::json!(skipped);
+        }
+
+        Ok(ToolOutput::new(result.to_string()))
     }
 }

@@ -3,6 +3,9 @@ use hyper::{Body, Response, StatusCode};
 use zw_cache::CacheManager;
 
 pub async fn handle_file_request(hash: &str, cache: Arc<CacheManager>) -> Response<Body> {
+    tracing::debug!("handle_file_request: hash={}, cache_dir={:?}", hash, cache.cache_dir());
+    let meta_path = cache.cache_dir().join("meta").join(&hash[..2.min(hash.len())]).join(hash);
+    tracing::debug!("  meta path: {:?}, exists: {}", meta_path, meta_path.exists());
     let meta = match cache.get_meta(hash) {
         Ok(Some(m)) => m,
         Ok(None) => return error_response("File not found"),

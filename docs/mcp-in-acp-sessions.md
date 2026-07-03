@@ -2,7 +2,9 @@
 
 ## Problem
 
-MCP tools work in interactive CLI/TUI sessions (`zeroclaw agent --agent craw`) but **not in daemon sessions** originating from zerowrapper's `ZeroClawBridge` or ACP-over-stdio.
+MCP tools work in interactive CLI/TUI sessions (`zeroclaw agent --agent craw`) but **not in daemon sessions** originating from ACP-over-stdio or ACP-over-WebSocket.
+
+> **Note for zerowrapper users**: The RPC socket path (Unix socket JSON-RPC) already initializes MCP because it defaults to `ChatMode::Chat`. If MCP was not working from zerowrapper, the fix was simply **restarting the daemon** after ensuring `[mcp] enabled = true` in config — no code changes needed for the RPC path.
 
 The root cause is in **two separate code paths** for session creation:
 
