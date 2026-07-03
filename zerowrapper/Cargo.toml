@@ -1,0 +1,51 @@
+[package]
+name = "zw"
+version = "0.1.0"
+edition.workspace = true
+
+[workspace]
+resolver = "2"
+members = [
+    "zw-core",
+    "zw-db",
+    "zw-cache",
+    "zw-mcp",
+    "zw-channels",
+    "crates/mcp-web-files-render",
+    "crates/ch-web",
+]
+
+[dependencies]
+zw-core = { path = "zw-core" }
+zw-db = { path = "zw-db" }
+zw-cache = { path = "zw-cache" }
+zw-mcp = { path = "zw-mcp" }
+zw-channels = { path = "zw-channels" }
+mcp-web-files-render = { path = "crates/mcp-web-files-render" }
+ch-web = { path = "crates/ch-web" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+
+[workspace.dependencies]
+turso = { path = "../turso/bindings/rust" }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+hyper = { version = "0.14", features = ["server", "http1", "tcp", "stream"] }
+tokio-tungstenite = "0.20"
+sha2 = "0.10"
+base64 = "0.22"
+mime_guess = "2"
+async-trait = "0.1"
+toml = "0.8"
+
+[workspace.package]
+edition = "2021"

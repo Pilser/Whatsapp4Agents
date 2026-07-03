@@ -22,7 +22,7 @@ struct PairAccountBody {
 pub async fn list(state: &Arc<ApiState>) -> Response<Body> {
     let db = &state.daemon.db_mgr.lock().await.main_conn;
     let mut rows = match db
-        .query("SELECT alias, phone, status, error, updated_at FROM accounts ORDER BY alias", ())
+        .query("SELECT alias, phone, status, error, updated_at, zeroclaw_agents, bridge_dm_enabled, bridge_group_enabled FROM accounts ORDER BY alias", ())
         .await
     {
         Ok(r) => r,
@@ -37,10 +37,16 @@ pub async fn list(state: &Arc<ApiState>) -> Response<Body> {
             Err(_) => break,
         };
         let error = get_text(&row, 3);
+        let agents = get_text(&row, 5);
+        let bridge_dm = get_int(&row, 6);
+        let bridge_group = get_int(&row, 7);
         let mut entry = serde_json::json!({
             "alias": get_text(&row, 0),
             "phone": get_text(&row, 1),
             "status": get_text(&row, 2),
+            "zeroclaw_agents": agents,
+            "bridge_dm_enabled": bridge_dm == 1,
+            "bridge_group_enabled": bridge_group == 1,
         });
         if !error.is_empty() {
             entry["error"] = serde_json::json!(error);
@@ -83,7 +89,7 @@ pub async fn get(state: &Arc<ApiState>, alias: &str) -> Response<Body> {
     let db = &state.daemon.db_mgr.lock().await.main_conn;
     let mut rows = match db
         .query(
-            "SELECT alias, phone, status, error, updated_at FROM accounts WHERE alias = ?1",
+            "SELECT alias, phone, status, error, updated_at, zeroclaw_agents, bridge_dm_enabled, bridge_group_enabled FROM accounts WHERE alias = ?1",
             turso::params::Params::Positional(vec![turso::Value::from(alias)]),
         )
         .await
@@ -98,15 +104,80 @@ pub async fn get(state: &Arc<ApiState>, alias: &str) -> Response<Body> {
     };
 
     let error = get_text(&row, 3);
+    let agents = get_text(&row, 5);
+    let bridge_dm = get_int(&row, 6);
+    let bridge_group = get_int(&row, 7);
     let mut entry = serde_json::json!({
         "alias": get_text(&row, 0),
         "phone": get_text(&row, 1),
         "status": get_text(&row, 2),
+        "zeroclaw_agents": agents,
+        "bridge_dm_enabled": bridge_dm == 1,
+        "bridge_group_enabled": bridge_group == 1,
     });
     if !error.is_empty() {
         entry["error"] = serde_json::json!(error);
     }
     json_ok(&entry)
+}
+
+pub async fn update_account_agents(state: &Arc<ApiState>, alias: &str, req: Request<Body>) -> Response<Body> {
+    let body = match hyper::body::to_bytes(req.into_body()).await {
+        Ok(b) => b,
+        Err(e) => return json_error(400, &e.to_string()),
+    };
+
+    #[derive(serde::Deserialize)]
+    struct AgentsBody {
+        agents: String,
+        #[serde(default)]
+        bridge_dm_enabled: Option<bool>,
+        #[serde(default)]
+        bridge_group_enabled: Option<bool>,
+    }
+
+    let update: AgentsBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(e) => return json_error(400, &e.to_string()),
+    };
+
+    let db = &state.daemon.db_mgr.lock().await.main_conn;
+    let now = chrono::Utc::now().timestamp();
+    let has_dm = update.bridge_dm_enabled.is_some();
+    let has_group = update.bridge_group_enabled.is_some();
+    let result = if has_dm || has_group {
+        let dm_val = update.bridge_dm_enabled.map(|v| if v { 1i64 } else { 0i64 });
+        let group_val = update.bridge_group_enabled.map(|v| if v { 1i64 } else { 0i64 });
+        let mut sql = String::from("UPDATE accounts SET zeroclaw_agents = ?1");
+        let mut params: Vec<turso::Value> = vec![turso::Value::from(update.agents)];
+        if has_dm {
+            sql.push_str(", bridge_dm_enabled = ?");
+            params.push(turso::Value::from(dm_val.unwrap()));
+        }
+        if has_group {
+            sql.push_str(", bridge_group_enabled = ?");
+            params.push(turso::Value::from(group_val.unwrap()));
+        }
+        sql.push_str(", updated_at = ?");
+        params.push(turso::Value::from(now));
+        sql.push_str(" WHERE alias = ?");
+        params.push(turso::Value::from(alias));
+        db.execute(&sql, turso::params::Params::Positional(params)).await
+    } else {
+        db.execute(
+            "UPDATE accounts SET zeroclaw_agents = ?1, updated_at = ?2 WHERE alias = ?3",
+            turso::params::Params::Positional(vec![
+                turso::Value::from(update.agents),
+                turso::Value::from(now),
+                turso::Value::from(alias),
+            ]),
+        ).await
+    };
+
+    match result {
+        Ok(_) => json_ok(&serde_json::json!({ "status": "updated", "alias": alias })),
+        Err(e) => json_error(500, &e.to_string()),
+    }
 }
 
 pub async fn delete(state: &Arc<ApiState>, alias: &str) -> Response<Body> {
@@ -301,5 +372,12 @@ fn get_text(row: &turso::Row, idx: usize) -> String {
     match row.get_value(idx) {
         Ok(turso::Value::Text(s)) => s,
         _ => String::new(),
+    }
+}
+
+fn get_int(row: &turso::Row, idx: usize) -> i64 {
+    match row.get_value(idx) {
+        Ok(turso::Value::Integer(n)) => n,
+        _ => 0,
     }
 }

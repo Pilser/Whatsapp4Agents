@@ -192,6 +192,20 @@ fn default_pacer_min_delay() -> u64 { 2000 }
 fn default_pacer_jitter() -> u64 { 1000 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BridgeConfig {
+    #[serde(default)]
+    pub zeroclaw_socket: Option<String>,
+}
+
+impl Default for BridgeConfig {
+    fn default() -> Self {
+        Self {
+            zeroclaw_socket: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub paths: PathsConfig,
@@ -204,6 +218,8 @@ pub struct Config {
     pub device: DeviceConfig,
     #[serde(default)]
     pub anti_ban: AntiBanConfig,
+    #[serde(default)]
+    pub bridge: BridgeConfig,
 }
 
 fn default_accounts() -> Vec<AccountConfig> {
@@ -222,6 +238,7 @@ impl Default for Config {
             agent: None,
             device: DeviceConfig::default(),
             anti_ban: AntiBanConfig::default(),
+            bridge: BridgeConfig::default(),
         }
     }
 }
@@ -292,6 +309,9 @@ impl Config {
                 daily_cap: overlay.anti_ban.daily_cap,
                 pacer_min_delay_ms: overlay.anti_ban.pacer_min_delay_ms,
                 pacer_jitter_ms: overlay.anti_ban.pacer_jitter_ms,
+            },
+            bridge: BridgeConfig {
+                zeroclaw_socket: overlay.bridge.zeroclaw_socket.clone().or(self.bridge.zeroclaw_socket.clone()),
             },
         }
     }

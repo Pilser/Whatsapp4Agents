@@ -74,6 +74,12 @@ enum Command {
         #[command(subcommand)]
         action: cmds::community::CommunityCommand,
     },
+    Group {
+        #[arg(long)]
+        account: String,
+        #[command(subcommand)]
+        action: cmds::group::GroupCommand,
+    },
     Task {
         #[command(subcommand)]
         action: cmds::task::TaskCommand,
@@ -401,6 +407,25 @@ async fn main() -> anyhow::Result<()> {
             if ipc::try_exec(&req).await.is_ok() { return Ok(()); }
             cmds::community::run(&account, action).await
         }
+        Command::Group { account, action } => {
+            use cmds::group::GroupCommand;
+            match &action {
+                GroupCommand::List => {
+                    let req = IpcRequest::new("group_list").with_account(&account);
+                    if ipc::try_exec(&req).await.is_ok() { return Ok(()); }
+                }
+                GroupCommand::Enable { group_id } => {
+                    let req = IpcRequest::new("group_enable").with_account(&account).with_chat_id(group_id);
+                    if ipc::try_exec(&req).await.is_ok() { return Ok(()); }
+                }
+                GroupCommand::Disable { group_id } => {
+                    let req = IpcRequest::new("group_disable").with_account(&account).with_chat_id(group_id);
+                    if ipc::try_exec(&req).await.is_ok() { return Ok(()); }
+                }
+                GroupCommand::Mentions { .. } | GroupCommand::Replies { .. } => {}
+            }
+            cmds::group::run(&account, action).await
+        }
         Command::Task { action } => {
             use cmds::task::TaskCommand;
             let req = match &action {
@@ -437,6 +462,7 @@ async fn cmd_help(category: Option<String>) -> anyhow::Result<()> {
             println!("  waos help memory     Get, set, search conversation memory");
             println!("  waos help graph      Shared groups, introductions, important contacts");
             println!("  waos help community  List communities, view members");
+            println!("  waos help group      List groups, enable/disable message storage");
             println!("  waos help stories    Post text/image/video status, revoke, history");
             println!("  waos help task       List and complete tasks");
             println!("  waos help dashboard  Show live dashboard, stream updates");
@@ -509,6 +535,17 @@ async fn cmd_help(category: Option<String>) -> anyhow::Result<()> {
             println!();
             println!("waos community --account <name> list                          list communities");
             println!("waos community --account <name> info <community_id>           details + members");
+        }
+        Some("group") => {
+            println!("All group commands require --account <name>");
+            println!();
+            println!("waos group --account <name> list                              list groups/communities");
+            println!("waos group --account <name> enable <group_id>                 enable message storage");
+            println!("waos group --account <name> disable <group_id>                disable message storage");
+            println!("waos group --account <name> mentions [group_id]               messages that tagged the agent");
+            println!("  --limit N");
+            println!("waos group --account <name> replies [group_id]                replies to the agent");
+            println!("  --limit N");
         }
         Some("stories") | Some("story") => {
             println!("Stories post to ALL contacts. Files on daemon filesystem.");

@@ -1,0 +1,114 @@
+---
+import Base from '../layouts/Base.astro';
+import Modal from '../components/Modal.astro';
+---
+
+<Base title="Agents">
+  <div class="flex items-center justify-between mb-6 sm:mb-8">
+    <h1 class="text-xl sm:text-2xl font-bold">Agents</h1>
+    <button id="refresh-btn" class="text-xs px-3 py-1.5 rounded-lg border border-waos-border text-waos-dim hover:text-waos-text transition">Refresh</button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+    <div class="lg:col-span-2">
+      <div id="agent-list" class="space-y-3">
+        <p class="text-waos-dim italic text-sm">Loading agents...</p>
+      </div>
+    </div>
+
+    <div class="space-y-4">
+      <div class="bg-waos-surface border border-waos-border rounded-xl p-5">
+        <h2 class="text-sm font-semibold mb-4">Add Agent</h2>
+        <form id="create-form" class="space-y-3">
+          <div>
+            <label for="alias" class="block text-xs text-waos-dim mb-1">Alias</label>
+            <input type="text" id="alias" name="alias" placeholder="my_agent" required
+              class="w-full bg-waos-bg border border-waos-border rounded-lg px-3 py-2 text-sm text-waos-text placeholder-waos-dim focus:outline-none focus:border-waos-accent transition">
+          </div>
+          <div>
+            <label for="description" class="block text-xs text-waos-dim mb-1">Description</label>
+            <input type="text" id="description" name="description" placeholder="Optional description"
+              class="w-full bg-waos-bg border border-waos-border rounded-lg px-3 py-2 text-sm text-waos-text placeholder-waos-dim focus:outline-none focus:border-waos-accent transition">
+          </div>
+          <button type="submit" class="w-full text-sm font-medium px-4 py-2 rounded-lg bg-waos-accent text-white hover:brightness-110 transition">Add Agent</button>
+        </form>
+        <p id="create-result" class="text-xs mt-2 hidden"></p>
+      </div>
+    </div>
+  </div>
+</Base>
+
+<Modal id="delete-modal" title="Delete Agent?" confirmText="Yes, Delete" variant="danger">
+  <p slot="body">This will remove this agent from the list. Accounts subscribed to this agent will no longer receive messages from it. Continue?</p>
+</Modal>
+
+<script>
+var currentDeleteAlias = null;
+
+function loadAgents() {
+  WAOS.api('/api/agents').then(function(data) {
+    var list = document.getElementById('agent-list');
+    if (!data.agents || data.agents.length === 0) {
+      list.innerHTML = '<div class="bg-waos-surface border border-waos-border rounded-xl p-6 text-center"><p class="text-waos-dim text-sm">No agents configured yet.</p></div>';
+      return;
+    }
+    list.innerHTML = data.agents.map(function(a) {
+      var desc = a.description ? '<span class="text-xs text-waos-dim ml-2">' + a.description + '</span>' : '';
+      return '<div class="agent-card bg-waos-surface border border-waos-border rounded-xl p-4 flex items-center justify-between">' +
+        '<div class="flex items-center gap-3">' +
+          '<span class="font-semibold text-sm">' + a.alias + '</span>' +
+          desc +
+        '</div>' +
+        '<button class="delete-agent-btn text-xs px-3 py-1.5 rounded-lg border border-waos-danger text-waos-danger hover:bg-waos-danger/10 transition" data-alias="' + a.alias + '">Delete</button>' +
+      '</div>';
+    }).join('');
+
+    document.querySelectorAll('.delete-agent-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        currentDeleteAlias = this.dataset.alias;
+        document.getElementById('delete-modal').classList.remove('hidden');
+        document.getElementById('delete-modal').classList.add('flex');
+      });
+    });
+  }).catch(function() {
+    document.getElementById('agent-list').innerHTML =
+      '<div class="bg-red-500/10 border border-red-500/30 rounded-xl p-4"><p class="text-sm text-red-400">Failed to load agents.</p></div>';
+  });
+}
+
+document.getElementById('create-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var alias = document.getElementById('alias').value.trim();
+  var description = document.getElementById('description').value.trim();
+  var result = document.getElementById('create-result');
+  result.classList.remove('hidden');
+  result.className = 'text-xs mt-2 text-waos-dim';
+  result.textContent = 'Creating...';
+
+  WAOS.api('/api/agents', { method: 'POST', body: JSON.stringify({ alias: alias, description: description || undefined }) }).then(function() {
+    result.textContent = 'Agent "' + alias + '" created!';
+    result.className = 'text-xs mt-2 text-waos-accent';
+    document.getElementById('alias').value = '';
+    document.getElementById('description').value = '';
+    loadAgents();
+  }).catch(function(e) {
+    result.textContent = e.message;
+    result.className = 'text-xs mt-2 text-waos-danger';
+  });
+});
+
+document.getElementById('delete-modal').addEventListener('click', function(e) {
+  if (!e.target.matches('[data-modal-confirm]')) return;
+  if (!currentDeleteAlias) return;
+  document.getElementById('delete-modal').classList.add('hidden');
+  document.getElementById('delete-modal').classList.remove('flex');
+
+  WAOS.api('/api/agents/' + currentDeleteAlias, { method: 'DELETE' }).then(function() {
+    currentDeleteAlias = null;
+    loadAgents();
+  }).catch(function(e) { alert(e.message); });
+});
+
+loadAgents();
+document.getElementById('refresh-btn').addEventListener('click', loadAgents);
+</script>

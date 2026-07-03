@@ -47,6 +47,9 @@ impl DbManager {
         conn.execute_batch(account_schema::SCHEMA).await?;
         account_schema::migrate_outbound_queue(&conn).await;
         account_schema::migrate_outbound_queue_v2(&conn).await;
+        account_schema::migrate_wa_groups(&conn).await;
+        account_schema::migrate_group_messages(&conn).await;
+        account_schema::migrate_group_messages_sender_is_admin(&conn).await;
 
         let conn_clone = conn.clone();
         self.accounts.insert(alias.to_string(), (db, conn));
@@ -62,6 +65,9 @@ impl DbManager {
         conn.execute_batch(account_schema::SCHEMA).await?;
         account_schema::migrate_outbound_queue(&conn).await;
         account_schema::migrate_outbound_queue_v2(&conn).await;
+        account_schema::migrate_wa_groups(&conn).await;
+        account_schema::migrate_group_messages(&conn).await;
+        account_schema::migrate_group_messages_sender_is_admin(&conn).await;
         Ok(conn)
     }
 

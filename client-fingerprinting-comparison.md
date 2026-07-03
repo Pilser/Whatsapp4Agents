@@ -35,11 +35,52 @@ How each library presents itself to WhatsApp's server during the Noise handshake
 
 | Signal | whatsmeow | Baileys | whatsapp-rust | zeroclaw |
 |---|---|---|---|---|
-| `phone_id` set | ❌ | ❌ | ❌ (was random UUID, fixed) | ✅ (random UUID) |
+| `phone_id` set | ❌ | ❌ | ❌ (was random UUID, fixed to `None`) | ✅ (random UUID) |
 | `DeviceProps.OS` is library name | ✅ (`"whatsmeow"`) | ❌ (not set) | ✅ (`"rust"`) | ✅ (`"ZeroClaw"`) |
 | Version is realistic | ❌ (`0.1.0`) | ✅ (fetches latest real version) | ❌ (`0.1.0`) | ❌ (`0.1.0`) |
 | Uses `require_full_sync=true` | ❌ | ❌ | ❌ (was `true`, fixed to `false`) | ✅ |
 | `PlatformType` matches display name | ❌ (`Unknown`→`"9"` but display says `"Chrome"`) | ✅ (`Chrome`→`"1"` matches display) | ❌ (`Unknown`→`"9"` but default display says `"Chrome (Linux)"`) | ✅ (`Desktop`→`'7'`→`Electron`→`"Chrome (ZeroClaw)"`) |
+| **buildHash algorithm** | SHA-256? | — | MD5 (WA Web behavior) | same |
+| **DeviceProps.version** parsed from OS version | ❌ (hardcoded) | ❌ (not set) | ❌ (hardcoded) | same |
+| **WAM events** | Not sent | Not sent (infra only) | Not sent | Not sent |
+
+## 3b. Reverse-Engineered WA Web Behavior
+
+From extracted WhatsApp Web JS bundles (June 2026 session):
+
+### WAWebBrowserInfo
+```js
+// Returns: {os: "Mac OS", version: "10.15.7", name: "Chrome", ua: "Chrome 135"}
+// Uses WAWebUA parser + Edge detection via navigator.userAgentData.brands
+```
+
+### WAWebClientPayload - 3 entry points
+- **getClientPayloadForLogin()** — sends `username`, `device`, `lc` (login counter), `connectAttemptCount` (persisted), `lidDbMigrated` flag
+- **getClientPayloadForRegistration()** — builds on base payload adding `devicePairingData`:
+  - `buildHash`: **MD5** of `VERSION_BASE` (NOT SHA-256)
+  - `deviceProps`: encoded DeviceProps protobuf
+  - `eRegid`, `eKeytype`, `eIdent`, `eSkeyId`, `eSkeyVal`, `eSkeySig`
+- **getClientPayloadForRegularLogin()** — third path
+
+### DeviceProps construction
+- `OS`: from browser UA parser `e.os.name` (e.g. `"Mac OS"`, `"Linux"`, `"Windows"`)
+- `Version`: OS version parsed into `primary/secondary/tertiary` integers
+- `PlatformType`: mapped from browser name → enum:
+  - Chrome→1, Firefox→3, IE→4, Opera→5, Safari→6, Edge→2, Electron→7, UWP→8
+  - Windows always maps to UWP (8)
+- `requireFullSync`: dynamic based on feature flags
+- `historySyncConfig`: includes feature toggles for bot/inline/biz messages, CAG reactions, call logs, group history, thumbnail sync limit
+
+### WAM Telemetry
+- Uses `WAWebWamCodegenUtils.defineEvents()` with **32-bit integer IDs** (not strings)
+- 422 unique event types extracted from JS bundles
+- Events sent via `w:stats` IQ namespace
+- Main module: `WAWebWam` with `commit()`, `set()`, `resumeJobs()`, `initialize()`
+
+### UserAgent
+- Fetches device info via `getDeviceInfo` backend call
+- Sets `appVersion`, `platform: WEB`, `releaseChannel`, `mcc/mnc`, `osVersion`, `manufacturer`, `device`, `osBuildNumber`, `localeLanguageIso6391`, `localeCountryIso31661Alpha2`
+- **phone_id NOT set** — this field exists in proto but WA Web never populates it
 
 ---
 
@@ -153,9 +194,10 @@ Real WA Desktop (Electron):
 
 | # | Recommendation | Status |
 |---|---|---|
-| 1 | Remove `phone_id` | ✅ Done — `None` by default in all `ClientProfile` constructors, verified by test |
+| 1 | Remove `phone_id` | ✅ Done — `None` by default (matches WA Web, confirmed by RE) |
 | 2 | Use realistic OS name | ✅ Done — WAOS config sets `"macOS"`, overrides library default `"rust"` |
 | 3 | Use `PlatformType::Chrome` | ✅ Done — WAOS config sets `Chrome` → wire byte `'1'` |
 | 4 | Fetch real WA Web version | ✅ Done — 3-tier: CDN sw.js → DB cache → config fallback |
 | 5 | Set `require_full_sync: false` | ✅ Done — `wacore/src/store/device.rs:208` changed to `false` |
-| 6 | Persist `phone_id` if set | ❌ Not needed — already omitted entirely (WA Web behavior) |
+| 6 | Use `buildHash = MD5(VERSION_BASE)` | 🟡 Not verified — WA Web uses MD5, not SHA-256 |
+| 7 | WAM event ID mapping | ✅ Available — 422 event types at `/tmp/wam_event_map.json` |

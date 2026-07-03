@@ -1,0 +1,43 @@
+---
+import landing from '../data/landing.json' assert { type: 'json' };
+---
+
+<section
+  class="px-6 py-8 md:px-10 mb-2 md:mb-4"
+  id="faq"
+  style="border-top: 1px solid var(--color-border-weak);"
+>
+  <h3 class="text-sm font-bold mb-6" style="color: var(--color-text-strong);">FAQ</h3>
+  <ul class="list-none p-0 m-0">
+    {landing.faq.map((item) => (
+      <li class="leading-relaxed" style="border-top: 1px solid var(--color-border-weak); padding: 12px 0;">
+        <details class="group">
+          <summary
+            class="flex items-start gap-4 mb-2 font-medium cursor-pointer text-sm list-none"
+            style="color: var(--color-text-strong);"
+          >
+            <span class="faq-icon flex-shrink-0" style="color: var(--color-text-weak);">[+]</span>
+            {item.q}
+          </summary>
+          <div class="ml-10 pb-4 text-sm leading-relaxed" style="color: var(--color-text);">
+            {item.a}
+          </div>
+        </details>
+      </li>
+    ))}
+  </ul>
+</section>
+
+<style>
+  summary::marker { content: none; }
+  summary::-webkit-details-marker { display: none; }
+</style>
+
+<script>
+  document.querySelectorAll('details').forEach(function(d) {
+    var icon = d.querySelector('.faq-icon');
+    d.addEventListener('toggle', function() {
+      if (icon) icon.textContent = d.open ? '[-]' : '[+]';
+    });
+  });
+</script>

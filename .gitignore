@@ -25,3 +25,12 @@ waos/**/dist/
 !xwhatsapp-rust/**
 !xwhatsapp-rust/wacore/
 !xwhatsapp-rust/wacore/**
+
+# Allow zerowrapper project, but still ignore its build and dependencies
+!zerowrapper/
+!zerowrapper/**
+zerowrapper/target/
+zerowrapper/**/node_modules/
+zerowrapper/**/dist/
+!docs/
+!docs/**

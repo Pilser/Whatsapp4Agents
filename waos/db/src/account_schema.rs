@@ -11,9 +11,40 @@ CREATE TABLE IF NOT EXISTS chats (
     muted_until INTEGER,
     description TEXT,
     photo_url TEXT,
+
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS wa_groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL DEFAULT 'group',
+    enabled INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS group_messages (
+    id TEXT PRIMARY KEY,
+    group_jid TEXT NOT NULL,
+    sender_jid TEXT NOT NULL,
+    sender_name TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',
+    has_media INTEGER NOT NULL DEFAULT 0,
+    message_type TEXT NOT NULL DEFAULT '',
+    media_caption TEXT NOT NULL DEFAULT '',
+    mentions TEXT,
+    quoted_message_id TEXT,
+    quoted_content TEXT,
+    quoted_sender TEXT,
+    timestamp INTEGER NOT NULL,
+    edited_at INTEGER,
+    deleted_at INTEGER,
+    status TEXT NOT NULL DEFAULT '',
+    sender_is_admin INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_messages_group_jid ON group_messages(group_jid);
+CREATE INDEX IF NOT EXISTS idx_group_messages_timestamp ON group_messages(timestamp);
 
 CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
@@ -146,6 +177,50 @@ pub async fn migrate_outbound_queue(conn: &turso::Connection) {
 pub async fn migrate_outbound_queue_v2(conn: &turso::Connection) {
     let _ = conn.execute(
         "ALTER TABLE outbound_queue ADD COLUMN metadata TEXT NOT NULL DEFAULT ''",
+        turso::params::Params::Positional(vec![]),
+    ).await;
+}
+
+pub async fn migrate_wa_groups(conn: &turso::Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS wa_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            type TEXT NOT NULL DEFAULT 'group',
+            enabled INTEGER NOT NULL DEFAULT 0
+        );"
+    ).await;
+}
+
+pub async fn migrate_group_messages(conn: &turso::Connection) {
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS group_messages (
+            id TEXT PRIMARY KEY,
+            group_jid TEXT NOT NULL,
+            sender_jid TEXT NOT NULL,
+            sender_name TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL DEFAULT '',
+            has_media INTEGER NOT NULL DEFAULT 0,
+            message_type TEXT NOT NULL DEFAULT '',
+            media_caption TEXT NOT NULL DEFAULT '',
+            mentions TEXT,
+            quoted_message_id TEXT,
+            quoted_content TEXT,
+            quoted_sender TEXT,
+            timestamp INTEGER NOT NULL,
+            edited_at INTEGER,
+            deleted_at INTEGER,
+            status TEXT NOT NULL DEFAULT '',
+            sender_is_admin INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_messages_group_jid ON group_messages(group_jid);
+        CREATE INDEX IF NOT EXISTS idx_group_messages_timestamp ON group_messages(timestamp);"
+    ).await;
+}
+
+pub async fn migrate_group_messages_sender_is_admin(conn: &turso::Connection) {
+    let _ = conn.execute(
+        "ALTER TABLE group_messages ADD COLUMN sender_is_admin INTEGER NOT NULL DEFAULT 0",
         turso::params::Params::Positional(vec![]),
     ).await;
 }

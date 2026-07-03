@@ -25,6 +25,7 @@ use waos_lib::resource_monitor::ResourceMonitor;
 use waos_lib::scoring::ScoringEngine;
 use waos_lib::sync_engine::SyncEngine;
 use waos_lib::vector_memory::{create_embedding_provider, VectorMemory};
+use waos_lib::bridge::zeroclaw::ZeroClawBridge;
 use waos_lib::webhook::WebhookPush;
 
 pub async fn run(port: u16) -> anyhow::Result<()> {
@@ -177,6 +178,22 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
         warn!("Media cache cleanup failed: {e}");
     }
 
+    let zeroclaw_bridge = match waos_lib::bridge::zeroclaw::ZeroClawConfig::from_config(&config) {
+        Some(zc_config) => {
+            info!(
+                "ZeroClaw bridge enabled — socket: {}",
+                zc_config.socket_path.display()
+            );
+            let mut bridge = ZeroClawBridge::new(zc_config);
+            bridge.set_clients(clients.clone());
+            if let Ok(main_conn) = db_mgr.lock().await.open_main_conn() {
+                bridge.set_main_conn(main_conn);
+            }
+            Some(Arc::new(bridge))
+        }
+        None => None,
+    };
+
     for acct in &config.accounts {
         let alias = &acct.alias;
 
@@ -196,6 +213,9 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
         health_collector.register_account(alias, conn.clone()).await;
         if let Some(ref vm) = vector_memory {
             vm.register_account(alias, conn.clone()).await;
+        }
+        if let Some(ref bridge) = zeroclaw_bridge {
+            bridge.register_account(alias, conn.clone()).await;
         }
         db_conns.lock().await.insert(alias.clone(), conn);
 
@@ -221,11 +241,16 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
         info!("Account '{}' initialized", alias);
     }
 
+    if let Some(bridge) = zeroclaw_bridge {
+        tokio::spawn(bridge.run(event_bus.subscribe()));
+    }
+
     let event_processor = {
         let bus = event_bus.clone();
         let sync = sync_engine.clone();
         let dash = dashboard.clone();
         let db = db_mgr.clone();
+        let q = outbound_queue.clone();
         tokio::spawn(async move {
             let mut rx = bus.subscribe();
             loop {
@@ -249,6 +274,31 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
                                     }
                                 }
                             }
+                        }
+
+                        // Terminal-visible warnings for account issues
+                        match &event {
+                            WaosEvent::AccountTempBan { account, reason, expire_secs } => {
+                                let mins = expire_secs / 60;
+                                warn!("⚠ [{account}] TEMPORARY BAN: {reason} — expires in ~{mins} min");
+                            }
+                            WaosEvent::AccountReachoutTimelock { account, is_active, enforcement_type, time_enforcement_ends } => {
+                                let expires = time_enforcement_ends.as_deref().unwrap_or("unknown");
+                                let enforce = enforcement_type.as_deref().unwrap_or("unknown");
+                                if *is_active {
+                                    warn!("⚠ [{account}] REACH-OUT TIMELOCK ACTIVE (enforcement={enforce}, expires={expires}) — messages to unknown contacts will be blocked");
+                                } else {
+                                    warn!("[{account}] REACH-OUT TIMELOCK CLEARED");
+                                }
+                                q.set_timelock_state(&account, *is_active, enforcement_type.clone(), time_enforcement_ends.clone()).await;
+                            }
+                            WaosEvent::AccountStatusUpdate { account, status } if status != "connected" && status != "disconnected" => {
+                                warn!("⚠ [{account}] Status changed: {status}");
+                            }
+                            WaosEvent::QueueItemStatusChanged { account, chat_id, error: Some(err), .. } => {
+                                warn!("⚠ [{account}] Message send failed to {chat_id}: {err}");
+                            }
+                            _ => {}
                         }
 
                         // Sync live connection status to the main DB so the
@@ -276,6 +326,12 @@ pub async fn run(port: u16) -> anyhow::Result<()> {
                             }
                             WaosEvent::AccountTempBan { account, reason, .. } => {
                                 Some((account.as_str(), "banned", reason.as_str()))
+                            }
+                            WaosEvent::AccountReachoutTimelock { account, is_active: true, .. } => {
+                                Some((account.as_str(), "reachout_timelocked", "active"))
+                            }
+                            WaosEvent::AccountReachoutTimelock { account, is_active: false, .. } => {
+                                Some((account.as_str(), "connected", ""))
                             }
                             _ => None,
                         } {

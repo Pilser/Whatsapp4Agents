@@ -237,3 +237,10 @@ curl -X DELETE http://localhost:8080/api/accounts/my_bot
 | wa-rs source | `whatsapp-rust/` |
 | Hyper reference | `EmbeddingServer/src/server/hyper_server.rs` |
 | Architecture plan | `WAOS Plan.md` |
+
+
+
+https://www.youtube.com/watch?v=H7HmzwI67ec&list=RDH7HmzwI67ec
+
+
+vestige dashboard      # → http://localhost:3927/dashboard

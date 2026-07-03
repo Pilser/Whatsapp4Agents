@@ -4,6 +4,16 @@ CREATE TABLE IF NOT EXISTS accounts (
     phone TEXT,
     status TEXT NOT NULL DEFAULT 'disconnected',
     error TEXT NOT NULL DEFAULT '',
+    zeroclaw_agents TEXT NOT NULL DEFAULT '',
+    bridge_dm_enabled INTEGER NOT NULL DEFAULT 1,
+    bridge_group_enabled INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agents (
+    alias TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -46,6 +56,22 @@ pub async fn migrate_accounts(conn: &turso::Connection) {
     use turso::params::Params;
     let _ = conn.execute(
         "ALTER TABLE accounts ADD COLUMN error TEXT NOT NULL DEFAULT ''",
+        Params::Positional(vec![]),
+    ).await;
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN zeroclaw_agents TEXT NOT NULL DEFAULT ''",
+        Params::Positional(vec![]),
+    ).await;
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN bridge_enabled INTEGER NOT NULL DEFAULT 1",
+        Params::Positional(vec![]),
+    ).await;
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN bridge_dm_enabled INTEGER NOT NULL DEFAULT 1",
+        Params::Positional(vec![]),
+    ).await;
+    let _ = conn.execute(
+        "ALTER TABLE accounts ADD COLUMN bridge_group_enabled INTEGER NOT NULL DEFAULT 1",
         Params::Positional(vec![]),
     ).await;
 }

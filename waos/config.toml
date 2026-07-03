@@ -10,3 +10,6 @@ hourly_cap = 80
 daily_cap = 800
 pacer_min_delay_ms = 2000
 pacer_jitter_ms = 1000
+
+[bridge]
+zeroclaw_socket = "/home/pilser/.zeroclaw/data/daemon.sock"

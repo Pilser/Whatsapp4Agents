@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{debug, error};
 use turso::Connection;
 use waos_core::events::WaosEvent;
 
@@ -73,45 +73,85 @@ impl SyncEngine {
                 is_from_me: _,
                 message_type,
                 media_caption,
+                quoted_message_id,
+                quoted_content,
+                quoted_sender,
                 timestamp,
             } => {
+                if chat_id.ends_with("@broadcast") {
+                    debug!("[{account}] Skipping broadcast/status message from {chat_id}");
+                    return;
+                }
+                let mut process = !*is_group;
                 let conn = {
                     let map = self.conns.lock().await;
                     map.get(account).cloned()
                 };
                 if let Some(conn) = conn {
                     let chat_type = if *is_group { "group" } else { "individual" };
-                    if let Err(e) = self
-                        .store_message(
-                            &conn, chat_id, message_id, sender_jid,
-                            sender_name, content, *has_media, message_type,
-                            media_caption, mentions, *timestamp,
-                        )
-                        .await
-                    {
-                        error!("Failed to store message for {account}: {e}");
-                    }
-                    if let Err(e) = self.update_chat_last(&conn, chat_id, content, chat_type, *timestamp).await {
-                        error!("Failed to update chat for {account}: {e}");
-                    }
-                    if let Err(e) = self.upsert_contact(&conn, sender_jid, sender_name, *is_group).await {
-                        error!("Failed to upsert contact for {account}: {e}");
+
+                    if *is_group {
+                        if let Err(e) = self.ensure_group(&conn, chat_id, sender_name).await {
+                            error!("[{account}] Failed to ensure group {chat_id}: {e}");
+                        }
+                        process = self.is_group_enabled(&conn, chat_id).await.unwrap_or(false);
+                        if !process {
+                            debug!("[{account}] Group {chat_id} is disabled — skipping message storage");
+                        }
                     }
 
-                    if let Some(ref scoring) = self.scoring {
-                        scoring.on_message_received(account, sender_jid, false).await;
-                    }
-                    if let Some(ref graph) = self.graph {
-                        graph.record_interaction(account, sender_jid, chat_id, "interacted_with").await;
-                    }
-                    if let Some(ref vm) = self.vector_memory {
-                        if let Err(e) = vm.index_message(account, message_id, content).await {
-                            error!("Failed to index message vector for {account}: {e}");
+                    let sender_is_admin = if *is_group {
+                        self.is_sender_admin(&conn, chat_id, sender_jid).await.unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    if process {
+                        if *is_group {
+                            if let Err(e) = self
+                                .store_group_message(
+                                    &conn, chat_id, message_id, sender_jid,
+                                    sender_name, content, *has_media, message_type,
+                                    media_caption, mentions, quoted_message_id,
+                                    quoted_content, quoted_sender, *timestamp,
+                                    sender_is_admin,
+                                )
+                                .await
+                            {
+                                error!("Failed to store group message for {account}: {e}");
+                            }
+                        } else if let Err(e) = self
+                            .store_message(
+                                &conn, chat_id, message_id, sender_jid,
+                                sender_name, content, *has_media, message_type,
+                                media_caption, mentions, *timestamp,
+                            )
+                            .await
+                        {
+                            error!("Failed to store message for {account}: {e}");
+                        }
+                        if let Err(e) = self.update_chat_last(&conn, chat_id, content, chat_type, *timestamp).await {
+                            error!("Failed to update chat for {account}: {e}");
+                        }
+                        if let Err(e) = self.upsert_contact(&conn, sender_jid, sender_name, *is_group).await {
+                            error!("Failed to upsert contact for {account}: {e}");
+                        }
+
+                        if let Some(ref scoring) = self.scoring {
+                            scoring.on_message_received(account, sender_jid, false).await;
+                        }
+                        if let Some(ref graph) = self.graph {
+                            graph.record_interaction(account, sender_jid, chat_id, "interacted_with").await;
+                        }
+                        if let Some(ref vm) = self.vector_memory {
+                            if let Err(e) = vm.index_message(account, message_id, content).await {
+                                error!("Failed to index message vector for {account}: {e}");
+                            }
                         }
                     }
                 }
 
-                if !mentions.is_empty() {
+                if process && !mentions.is_empty() {
                     let snippet = if content.len() > 100 {
                         format!("{}...", &content[..100])
                     } else {
@@ -144,6 +184,9 @@ impl SyncEngine {
                     map.get(account).cloned()
                 };
                 if let Some(conn) = conn {
+                    if let Err(e) = self.ensure_group(&conn, group_jid, name).await {
+                        error!("Failed to ensure group in wa_groups for {account}: {e}");
+                    }
                     if let Err(e) = self.update_group_metadata(&conn, group_jid, name, description).await {
                         error!("Failed to update group metadata for {account}: {e}");
                     }
@@ -328,6 +371,106 @@ impl SyncEngine {
         )
         .await?;
         Ok(())
+    }
+
+    async fn store_group_message(
+        &self,
+        conn: &Connection,
+        group_jid: &str,
+        message_id: &str,
+        sender_jid: &str,
+        sender_name: &str,
+        content: &str,
+        has_media: bool,
+        message_type: &str,
+        media_caption: &str,
+        mentions: &[String],
+        quoted_message_id: &str,
+        quoted_content: &str,
+        quoted_sender: &str,
+        timestamp: i64,
+        sender_is_admin: bool,
+    ) -> anyhow::Result<()> {
+        let mentions_json = if mentions.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(mentions)?)
+        };
+        conn.execute(
+            "INSERT OR IGNORE INTO group_messages
+             (id, group_jid, sender_jid, sender_name, content, has_media,
+              message_type, media_caption, mentions, quoted_message_id,
+              quoted_content, quoted_sender, timestamp, sender_is_admin)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            turso::params::Params::Positional(vec![
+                turso::Value::from(message_id),
+                turso::Value::from(group_jid),
+                turso::Value::from(sender_jid),
+                turso::Value::from(sender_name),
+                turso::Value::from(content),
+                turso::Value::from(has_media),
+                turso::Value::from(message_type),
+                turso::Value::from(media_caption),
+                mentions_json.map(|j| turso::Value::from(j)).unwrap_or(turso::Value::Null),
+                turso::Value::from(quoted_message_id),
+                turso::Value::from(quoted_content),
+                turso::Value::from(quoted_sender),
+                turso::Value::from(timestamp),
+                turso::Value::from(sender_is_admin),
+            ]),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn ensure_group(&self, conn: &Connection, group_jid: &str, name: &str) -> anyhow::Result<()> {
+        conn.execute(
+            "INSERT OR IGNORE INTO wa_groups (id, name, type, enabled) VALUES (?1, '', 'group', 0)",
+            turso::params::Params::Positional(vec![turso::Value::from(group_jid)]),
+        ).await?;
+        if !name.is_empty() {
+            conn.execute(
+                "UPDATE wa_groups SET name = ?1 WHERE id = ?2 AND name = ''",
+                turso::params::Params::Positional(vec![
+                    turso::Value::from(name),
+                    turso::Value::from(group_jid),
+                ]),
+            ).await?;
+        }
+        Ok(())
+    }
+
+    async fn is_group_enabled(&self, conn: &Connection, group_jid: &str) -> anyhow::Result<bool> {
+        let mut rows = conn.query(
+            "SELECT enabled FROM wa_groups WHERE id = ?1",
+            turso::params::Params::Positional(vec![turso::Value::from(group_jid)]),
+        ).await?;
+        if let Some(row) = rows.next().await? {
+            match row.get_value(0) {
+                Ok(turso::Value::Integer(n)) => Ok(n != 0),
+                _ => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn is_sender_admin(&self, conn: &Connection, group_jid: &str, sender_jid: &str) -> anyhow::Result<bool> {
+        let mut rows = conn.query(
+            "SELECT is_admin FROM group_participants WHERE group_jid = ?1 AND participant_jid = ?2",
+            turso::params::Params::Positional(vec![
+                turso::Value::from(group_jid),
+                turso::Value::from(sender_jid),
+            ]),
+        ).await?;
+        if let Some(row) = rows.next().await? {
+            match row.get_value(0) {
+                Ok(turso::Value::Integer(n)) => Ok(n != 0),
+                _ => Ok(false),
+            }
+        } else {
+            Ok(false)
+        }
     }
 
     async fn update_chat_last(
@@ -833,6 +976,11 @@ impl SyncEngine {
                         ]),
                     ).await?;
                 }
+            }
+
+            // Ensure group is tracked in wa_groups
+            if is_group {
+                self.ensure_group(conn, chat_id, chat_name).await?;
             }
 
             // Store messages from this conversation

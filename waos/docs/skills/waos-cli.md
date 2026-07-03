@@ -229,6 +229,23 @@ waos message --account <account> send ...         respond
 waos memory --account <account> set <chat> '{"notes":"..."}'  save context
 ```
 
+## waos group
+
+```
+waos group --account <account> list           # list groups
+waos group --account <account> enable <jid>   # enable messages for a group
+waos group --account <account> disable <jid>  # disable messages for a group
+
+waos group --account <name> mentions                 # all group messages that tagged you
+waos group --account <name> mentions <group_jid>      # only in that group
+waos group --account <name> mentions --limit 50       # more results
+
+waos group --account <name> replies                   # all replies to your messages
+waos group --account <name> replies <group_jid>       # only in that group
+
+
+```
+
 ## Output
 
 All output is JSON. Pipe to `jq` for filtering. Each message in `chat history` includes `is_me: true/false`. Media messages include `media_path` (path on daemon's filesystem).

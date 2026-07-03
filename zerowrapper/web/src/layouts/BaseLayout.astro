@@ -1,0 +1,94 @@
+---
+import '../styles/global.css';
+import settings from '../data/sitesettings.json' assert { type: 'json' };
+const { site } = settings;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{site.title}</title>
+    <meta name="description" content={site.description} />
+    <meta property="og:title" content={site.title} />
+    <meta property="og:description" content={site.description} />
+    <meta property="og:url" content={site.url} />
+    <link rel="icon" type="image/svg+xml" href={site.favicon} />
+    <script is:inline>
+      (function(){
+        var saved = localStorage.getItem('theme');
+        var mq = window.matchMedia('(prefers-color-scheme: dark)');
+        if (saved) {
+          document.documentElement.setAttribute('data-theme', saved);
+        } else {
+          document.documentElement.setAttribute('data-theme', mq.matches ? 'dark' : 'light');
+          mq.addEventListener('change', function(e) {
+            if (!localStorage.getItem('theme')) {
+              document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+            }
+          });
+        }
+      })();
+    </script>
+    <style>
+      #bg-canvas { position: fixed; inset: 0; z-index: 100; pointer-events: none; }
+    </style>
+  </head>
+  <body class="flex flex-col min-h-screen">
+    <slot />
+    <canvas id="bg-canvas"></canvas>
+    <script is:inline>
+      var canvas = document.getElementById('bg-canvas');
+      var ctx = canvas.getContext('2d');
+      var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      function resize() {
+        var dpr = window.devicePixelRatio || 1;
+        canvas.width = window.innerWidth * dpr;
+        canvas.height = window.innerHeight * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function draw(time) {
+        if (!prefersReduced) requestAnimationFrame(draw);
+        var w = window.innerWidth, h = window.innerHeight;
+        ctx.clearRect(0, 0, w, h);
+
+        var topSpacing = 12, bottomSpacing = 48;
+        var topSize = 1.5, bottomSize = 4;
+        var topAlpha = 0.28, bottomAlpha = 0.05;
+        var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        var dotColor = isDark
+          ? 'hsl(28, 90%, 50%)'
+          : getComputedStyle(document.documentElement).getPropertyValue('--color-bg-strong').trim() || 'hsl(0, 5%, 12%)';
+
+        ctx.fillStyle = dotColor;
+        var y = 4;
+        while (y < h) {
+          var t = Math.min(y / h, 1);
+          var spacing = topSpacing + (bottomSpacing - topSpacing) * t;
+          var size = topSize + (bottomSize - topSize) * t;
+          var alpha = topAlpha + (bottomAlpha - topAlpha) * t;
+          var wave = Math.sin(y * 0.018 + time * 0.0004) * 2.5;
+
+          ctx.globalAlpha = alpha;
+          for (var x = -spacing; x < w + spacing; x += spacing) {
+            ctx.beginPath();
+            ctx.arc(x + wave, y, size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          y += spacing;
+        }
+        ctx.globalAlpha = 1;
+        if (prefersReduced) return;
+      }
+
+      resize();
+      window.addEventListener('resize', resize);
+      var themeObserver = new MutationObserver(function() { resize(); });
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      requestAnimationFrame(draw);
+    </script>
+  </body>
+</html>

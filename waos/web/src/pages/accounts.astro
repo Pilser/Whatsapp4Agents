@@ -53,6 +53,36 @@ import Modal from '../components/Modal.astro';
           <button id="delete-account-btn" class="w-full text-sm font-medium px-4 py-2.5 rounded-lg border border-waos-danger text-waos-danger hover:bg-waos-danger/10 transition">Delete Account</button>
         </div>
         <div class="pt-3 border-t border-waos-border">
+          <div class="pt-3 border-t border-waos-border mb-2">
+            <h3 class="text-xs font-semibold text-waos-dim uppercase tracking-wider mb-3">Bridge</h3>
+            <label class="flex items-center justify-between py-2 cursor-pointer group">
+              <div>
+                <p class="text-sm text-waos-text group-hover:text-waos-accent transition">Direct Messages</p>
+                <p class="text-xs text-waos-dim mt-0.5" id="manage-bridge-dm-label">Forward DMs to agents</p>
+              </div>
+              <button class="bridge-toggle relative w-11 h-6 rounded-full shrink-0 focus:outline-none" data-key="dm">
+                <span class="absolute inset-0 rounded-full transition-colors"></span>
+                <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform shadow-sm"></span>
+              </button>
+            </label>
+            <label class="flex items-center justify-between py-2 cursor-pointer group">
+              <div>
+                <p class="text-sm text-waos-text group-hover:text-waos-accent transition">Group Messages</p>
+                <p class="text-xs text-waos-dim mt-0.5" id="manage-bridge-group-label">Forward group mentions/replies to agents</p>
+              </div>
+              <button class="bridge-toggle relative w-11 h-6 rounded-full shrink-0 focus:outline-none" data-key="group">
+                <span class="absolute inset-0 rounded-full transition-colors"></span>
+                <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform shadow-sm"></span>
+              </button>
+            </label>
+          </div>
+          <h3 class="text-xs font-semibold text-waos-dim uppercase tracking-wider mb-3">Agents</h3>
+          <div id="manage-agents" class="space-y-2">
+            <p class="text-xs text-waos-dim italic">Loading agents...</p>
+          </div>
+          <p id="manage-agents-result" class="text-xs mt-2 hidden"></p>
+        </div>
+        <div class="pt-3 border-t border-waos-border">
           <h3 class="text-xs font-semibold text-waos-dim uppercase tracking-wider mb-2">Recent Events</h3>
           <div id="manage-log" class="text-xs font-mono max-h-48 overflow-y-auto space-y-1">
             <p class="text-waos-dim italic">No recent events</p>
@@ -260,8 +290,10 @@ function loadManageData(alias) {
   var errorEl = document.getElementById('manage-error');
   var phoneEl = document.getElementById('manage-phone');
   var logEl = document.getElementById('manage-log');
+  var agentsContainer = document.getElementById('manage-agents');
+  var agentsResult = document.getElementById('manage-agents-result');
 
-  errorEl.classList.add('hidden');
+    errorEl.classList.add('hidden');
 
   WAOS.api('/api/accounts/' + alias).then(function(data) {
     var status = data.status || 'unknown';
@@ -269,6 +301,58 @@ function loadManageData(alias) {
     statusText.textContent = status;
     phoneEl.textContent = data.phone || '(not set)';
     if (data.error) { errorEl.textContent = data.error; errorEl.classList.remove('hidden'); }
+
+    renderBridgeToggles(
+      data.bridge_dm_enabled !== false,
+      data.bridge_group_enabled !== false
+    );
+
+    var currentAgents = (data.zeroclaw_agents || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+
+    WAOS.api('/api/agents').then(function(agentData) {
+      if (!agentData.agents || agentData.agents.length === 0) {
+        agentsContainer.innerHTML = '<p class="text-xs text-waos-dim italic">No agents configured. <a href="/agents" class="text-waos-accent hover:underline">Add one</a>.</p>';
+        return;
+      }
+      agentsContainer.innerHTML = agentData.agents.map(function(a) {
+        var checked = currentAgents.indexOf(a.alias) !== -1 ? 'checked' : '';
+        var desc = a.description ? '<span class="text-xs text-waos-dim ml-1">' + a.description + '</span>' : '';
+        return '<label class="flex items-center gap-2 cursor-pointer group">' +
+          '<input type="checkbox" class="agent-checkbox w-4 h-4 rounded border-waos-border bg-waos-bg text-waos-accent focus:ring-waos-accent cursor-pointer" data-alias="' + a.alias + '" ' + checked + '>' +
+          '<span class="text-sm text-waos-text group-hover:text-waos-accent transition">' + a.alias + '</span>' +
+          desc +
+        '</label>';
+      }).join('');
+
+      document.querySelectorAll('.agent-checkbox').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+          var checked = [];
+          document.querySelectorAll('.agent-checkbox:checked').forEach(function(c) { checked.push(c.dataset.alias); });
+          var agentsStr = checked.join(',');
+          agentsResult.classList.remove('hidden', 'text-waos-accent', 'text-waos-danger');
+          agentsResult.className = 'text-xs mt-2 text-waos-dim';
+          agentsResult.textContent = 'Saving...';
+          WAOS.api('/api/accounts/' + alias + '/agents', { method: 'PUT', body: JSON.stringify({ agents: agentsStr, bridge_dm_enabled: bridgeDmEnabled, bridge_group_enabled: bridgeGroupEnabled }) }).then(function() {
+            agentsResult.textContent = 'Saved!';
+            agentsResult.className = 'text-xs mt-2 text-waos-accent';
+            setTimeout(function() { agentsResult.classList.add('hidden'); }, 2000);
+          }).catch(function(e) {
+            agentsResult.textContent = e.message;
+            agentsResult.className = 'text-xs mt-2 text-waos-danger';
+          });
+        });
+      });
+
+      document.querySelectorAll('.bridge-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var key = this.dataset.key;
+          var current = key === 'dm' ? bridgeDmEnabled : bridgeGroupEnabled;
+          saveBridgeState(key, !current, alias);
+        });
+      });
+    }).catch(function() {
+      agentsContainer.innerHTML = '<p class="text-xs text-waos-danger">Failed to load agents.</p>';
+    });
   }).catch(function() {
     badgeEl.innerHTML = statusHtml('unknown');
     statusText.textContent = 'unknown';
@@ -353,6 +437,57 @@ document.getElementById('delete-account-btn').addEventListener('click', function
   document.getElementById('delete-modal').classList.remove('hidden');
   document.getElementById('delete-modal').classList.add('flex');
 });
+
+var bridgeDmEnabled = true;
+var bridgeGroupEnabled = true;
+
+function renderBridgeToggle(key, enabled) {
+  var toggle = document.querySelector('.bridge-toggle[data-key="' + key + '"]');
+  if (!toggle) return;
+  var labelId = key === 'dm' ? 'manage-bridge-dm-label' : 'manage-bridge-group-label';
+  var label = document.getElementById(labelId);
+  var track = toggle.querySelector('span:first-child');
+  var thumb = toggle.querySelector('span:last-child');
+  if (enabled) {
+    track.className = 'absolute inset-0 rounded-full bg-waos-accent transition-colors';
+    thumb.className = 'absolute top-0.5 left-[22px] w-5 h-5 rounded-full bg-white transition-transform shadow-sm';
+    label.textContent = key === 'dm' ? 'Forwarding DMs to agents' : 'Forwarding group messages to agents';
+  } else {
+    track.className = 'absolute inset-0 rounded-full bg-waos-border transition-colors';
+    thumb.className = 'absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform shadow-sm';
+    label.textContent = key === 'dm' ? 'DM bridge paused' : 'Group bridge paused';
+  }
+  if (key === 'dm') bridgeDmEnabled = enabled;
+  else bridgeGroupEnabled = enabled;
+}
+
+function renderBridgeToggles(dmEnabled, groupEnabled) {
+  renderBridgeToggle('dm', dmEnabled);
+  renderBridgeToggle('group', groupEnabled);
+}
+
+function saveBridgeState(key, newEnabled, alias) {
+  var checked = [];
+  document.querySelectorAll('.agent-checkbox:checked').forEach(function(c) { checked.push(c.dataset.alias); });
+  var agentsStr = checked.join(',');
+  var body = { agents: agentsStr };
+  if (key === 'dm') body.bridge_dm_enabled = newEnabled;
+  else body.bridge_group_enabled = newEnabled;
+  var agentsResult = document.getElementById('manage-agents-result');
+  agentsResult.classList.remove('hidden', 'text-waos-accent', 'text-waos-danger');
+  agentsResult.className = 'text-xs mt-2 text-waos-dim';
+  agentsResult.textContent = 'Saving...';
+  WAOS.api('/api/accounts/' + alias + '/agents', { method: 'PUT', body: JSON.stringify(body) }).then(function() {
+    renderBridgeToggle(key, newEnabled);
+    agentsResult.textContent = 'Saved!';
+    agentsResult.className = 'text-xs mt-2 text-waos-accent';
+    setTimeout(function() { agentsResult.classList.add('hidden'); }, 2000);
+  }).catch(function(e) {
+    renderBridgeToggle(key, !newEnabled);
+    agentsResult.textContent = e.message;
+    agentsResult.className = 'text-xs mt-2 text-waos-danger';
+  });
+}
 
 window.closeManage = function() {
   document.getElementById('manage-overlay').classList.add('hidden');

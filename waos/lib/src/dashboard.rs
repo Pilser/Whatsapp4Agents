@@ -193,6 +193,7 @@ impl DashboardWriter {
             WaosEvent::MessageReceipt { .. } => "MessageReceipt",
             WaosEvent::UndecryptableMessage { .. } => "UndecryptableMessage",
             WaosEvent::AccountTempBan { .. } => "AccountTempBan",
+            WaosEvent::AccountReachoutTimelock { .. } => "AccountReachoutTimelock",
             WaosEvent::ContactPhoneChanged { .. } => "ContactPhoneChanged",
             WaosEvent::ChatPresenceUpdate { .. } => "ChatPresenceUpdate",
             WaosEvent::PresenceUpdate { .. } => "PresenceUpdate",

@@ -291,6 +291,9 @@ async fn dispatch(req: &IpcRequest, state: &DaemonState) -> IpcResponse {
         "community_info" => {
             cmd_community_info(state, alias, req.community_id.as_deref().unwrap_or("")).await
         }
+        "group_list" => cmd_group_list(state, alias).await,
+        "group_enable" => cmd_group_set_enabled(state, alias, req.chat_id.as_deref().unwrap_or(""), true).await,
+        "group_disable" => cmd_group_set_enabled(state, alias, req.chat_id.as_deref().unwrap_or(""), false).await,
         "status_send_text" => {
             let w = req.wait.unwrap_or(false);
             let t = req.timeout.unwrap_or(30);
@@ -1521,6 +1524,54 @@ async fn cmd_community_info(state: &DaemonState, alias: &str, community_id: &str
         "last_message": text_val(row.get_value(3)),
         "last_activity": int_val(row.get_value(4)),
         "members": member_list,
+    }))
+}
+
+// ── Group ──────────────────────────────────────────────────────────────────
+
+async fn cmd_group_list(state: &DaemonState, alias: &str) -> IpcResponse {
+    let conn = match open_account_conn(state, alias).await {
+        Ok(c) => c,
+        Err(e) => return IpcResponse::err(e),
+    };
+    let mut rows = match conn.query(
+        "SELECT id, name, type, enabled FROM wa_groups ORDER BY name ASC",
+        (),
+    ).await {
+        Ok(r) => r,
+        Err(e) => return IpcResponse::err(format!("query: {e}")),
+    };
+    let mut groups = Vec::new();
+    while let Ok(Some(row)) = rows.next().await {
+        groups.push(serde_json::json!({
+            "id": text_val(row.get_value(0)),
+            "name": text_val(row.get_value(1)),
+            "type": text_val(row.get_value(2)),
+            "enabled": int_val(row.get_value(3)) != 0,
+        }));
+    }
+    IpcResponse::ok(serde_json::json!({ "groups": groups }))
+}
+
+async fn cmd_group_set_enabled(state: &DaemonState, alias: &str, group_id: &str, enabled: bool) -> IpcResponse {
+    let conn = match open_account_conn(state, alias).await {
+        Ok(c) => c,
+        Err(e) => return IpcResponse::err(e),
+    };
+    let val: i64 = if enabled { 1 } else { 0 };
+    if let Err(e) = conn.execute(
+        "UPDATE wa_groups SET enabled = ?1 WHERE id = ?2",
+        turso::params::Params::Positional(vec![
+            turso::Value::from(val),
+            turso::Value::from(group_id),
+        ]),
+    ).await {
+        return IpcResponse::err(format!("db update: {e}"));
+    }
+    IpcResponse::ok(serde_json::json!({
+        "account": alias,
+        "group_id": group_id,
+        "enabled": enabled,
     }))
 }
 

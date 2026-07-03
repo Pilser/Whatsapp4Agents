@@ -25,6 +25,9 @@ pub enum WaosEvent {
         is_from_me: bool,
         message_type: String,
         media_caption: String,
+        quoted_message_id: String,
+        quoted_content: String,
+        quoted_sender: String,
         timestamp: i64,
     },
     MessageEdited {
@@ -136,6 +139,14 @@ pub enum WaosEvent {
     AccountStatusUpdate {
         account: String,
         status: String,
+    },
+    /// Account has a reach-out timelock restriction (error 463).
+    /// When active, messages to unknown contacts may be rejected.
+    AccountReachoutTimelock {
+        account: String,
+        is_active: bool,
+        enforcement_type: Option<String>,
+        time_enforcement_ends: Option<String>,
     },
     HistorySyncProgress {
         account: String,

@@ -5,6 +5,7 @@ pub mod contact;
 pub mod dashboard;
 pub mod dashboard_watch;
 pub mod graph;
+pub mod group;
 pub mod media;
 pub mod memory;
 pub mod message;

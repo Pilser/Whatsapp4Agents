@@ -5,6 +5,7 @@ use hyper::{Body, Request, Response, Method};
 use crate::server::ApiState;
 
 pub mod accounts;
+pub mod agents;
 pub mod auth;
 pub mod dashboard;
 pub mod events;
@@ -29,7 +30,7 @@ pub async fn handle_request(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    if method == Method::POST || method == Method::DELETE {
+    if method == Method::POST || method == Method::PUT || method == Method::DELETE {
         if let Some(resp) = auth::require_auth(&req, &state) {
             return Ok(resp);
         }
@@ -44,6 +45,14 @@ pub async fn handle_request(
         }
         (&Method::POST, p) if p.starts_with("/api/accounts/") && p.ends_with("/pair") => {
             accounts::pair(&state, &extract_alias(&path), req).await
+        }
+        (&Method::PUT, p) if p.starts_with("/api/accounts/") && p.ends_with("/agents") => {
+            accounts::update_account_agents(&state, &extract_alias(&path), req).await
+        }
+        (&Method::GET, "/api/agents") => agents::list(&state).await,
+        (&Method::POST, "/api/agents") => agents::create(&state, req).await,
+        (&Method::DELETE, p) if p.starts_with("/api/agents/") => {
+            agents::delete(&state, &extract_alias(&path)).await
         }
         (&Method::GET, p) if p.starts_with("/api/accounts/") && p.ends_with("/qr") => {
             accounts::qr(&state, &extract_alias(&path)).await

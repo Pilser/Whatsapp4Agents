@@ -26,16 +26,16 @@ use crate::event_bus::EventBus;
 use crate::sync_engine::SyncEngine;
 use waos_core::events::WaosEvent;
 
-/// Target hostname for network connectivity checks (WhatsApp Web endpoint).
-// Use a generic host for network check — wss.web.whatsapp.com can fail DNS
-// in some environments even when general internet is fine (browser uses DoH).
-const WHATSAPP_HOST: &str = "1.1.1.1:443";
 /// Interval between DNS probes during backoff sleep.
 const NET_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
-/// Returns true if DNS resolution succeeds for the WhatsApp Web hostname.
+/// Returns true if both general internet and WhatsApp are reachable via DNS.
 async fn is_network_available() -> bool {
-    tokio::net::lookup_host(WHATSAPP_HOST).await.is_ok()
+    let (r1, r2) = tokio::join!(
+        tokio::net::lookup_host("1.1.1.1:443"),
+        tokio::net::lookup_host("web.whatsapp.com:443"),
+    );
+    r1.is_ok() && r2.is_ok()
 }
 
 /// Sleeps up to `max_delay`, waking every `NET_CHECK_INTERVAL` to probe DNS.
@@ -256,6 +256,7 @@ impl AccountManager {
 
             let (logout_tx, mut logout_rx) = tokio::sync::broadcast::channel::<()>(1);
             let session_revoked = Arc::new(AtomicBool::new(false));
+            let last_error_was_503 = Arc::new(AtomicBool::new(false));
 
             let alias_clone = alias.to_string();
             let eb = event_bus.clone();
@@ -267,6 +268,7 @@ impl AccountManager {
             let pair_results_clone = pair_results.clone();
             let sync_clone = sync_engine.clone();
             let hc_clone = history_conns.clone();
+            let last_error_was_503_clone = last_error_was_503.clone();
 
             let platform = match device_config.platform_type.as_str() {
                 "Chrome" => PlatformType::Chrome,
@@ -316,12 +318,41 @@ impl AccountManager {
                         let pr = pair_results_clone.clone();
                         let sync = sync_clone.clone();
                         let hc = hc_clone.clone();
+                        let _503 = last_error_was_503_clone.clone();
                         async move {
                             match &*event {
                                 Event::Connected(_) => {
-                                    info!("[{a}] Connected to WhatsApp");
-                                    cl.lock().await.insert(a.clone(), client.clone());
-                                    e.publish(WaosEvent::Connected { account: a });
+                                    _503.store(false, Ordering::Relaxed);
+                                    let acct = a.clone();
+                                    info!("[{acct}] Connected to WhatsApp");
+                                    cl.lock().await.insert(acct.clone(), client.clone());
+                                    e.publish(WaosEvent::Connected { account: acct.clone() });
+                                    let eb = e.clone();
+                                    let c = client.clone();
+                                    tokio::spawn(async move {
+                                        match c.reachout_timelock().fetch().await {
+                                            Ok(Some(status)) => {
+                                                if status.is_active {
+                                                    let msg = format!(
+                                                        "Reach-out timelock active (enforcement={:?}, expires={:?})",
+                                                        status.enforcement_type,
+                                                        status.time_enforcement_ends,
+                                                    );
+                                                    warn!("[{acct}] {msg}");
+                                                    eb.publish(WaosEvent::AccountReachoutTimelock {
+                                                        account: acct.clone(),
+                                                        is_active: true,
+                                                        enforcement_type: status.enforcement_type,
+                                                        time_enforcement_ends: status.time_enforcement_ends,
+                                                    });
+                                                }
+                                            }
+                                            Ok(None) => {}
+                                            Err(err) => {
+                                                warn!("[{acct}] Failed to check reach-out timelock: {err}");
+                                            }
+                                        }
+                                    });
                                 }
                                 Event::Disconnected(_) => {
                                     warn!("[{a}] Disconnected");
@@ -347,6 +378,8 @@ impl AccountManager {
                                         || msg.sticker_message.is_some()
                                         || msg.ptv_message.is_some();
 
+                                    let (quoted_message_id, quoted_content, quoted_sender) = extract_quoted_info(&msg);
+
                                     e.publish(WaosEvent::NewMessage {
                                         account: a,
                                         chat_id,
@@ -360,6 +393,9 @@ impl AccountManager {
                                         is_from_me: info.source.is_from_me,
                                         message_type: message_type.to_string(),
                                         media_caption,
+                                        quoted_message_id,
+                                        quoted_content,
+                                        quoted_sender,
                                         timestamp: timestamp.timestamp(),
                                     });
                                 }
@@ -374,7 +410,10 @@ impl AccountManager {
                                     let _ = lt.send(());
                                 }
                                 Event::StreamError(err) => {
-                                    error!("[{a}] Stream error: {err:?}");
+                                    error!("[{a}] Stream error code={}: {err:?}", err.code);
+                                    if err.code == "503" {
+                                        _503.store(true, Ordering::Relaxed);
+                                    }
                                 }
                                 Event::PairingCode { code, .. } => {
                                     e.publish(WaosEvent::PairingCode {
@@ -661,7 +700,7 @@ impl AccountManager {
                     }
                 });
 
-            let mut bot = match builder.build().await {
+            let bot = match builder.build().await {
                 Ok(b) => b,
                 Err(e) => {
                     error!("[{alias}] Build bot failed: {e}");
@@ -669,6 +708,10 @@ impl AccountManager {
                     continue;
                 }
             };
+
+            // Disable inner auto-reconnect — the outer waos loop handles all retries
+            // with proper exponential backoff and DNS checks.
+            bot.client().enable_auto_reconnect.store(false, Ordering::Relaxed);
 
             // Store client immediately so API handlers can call pair_with_code() directly
             pending_clients.lock().await.insert(alias.to_string(), bot.client());
@@ -796,13 +839,22 @@ impl AccountManager {
                 wait_for_network(Duration::from_secs(300), alias).await;
             }
 
+            // WA Web waits 300s after a 503 (section 10 of reverse-engineered findings).
+            // DNS-aware so if network actually drops, we exit early; if DNS stays up
+            // (typical during server restart), this runs the full 300s.
+            if last_error_was_503.load(Ordering::Relaxed) {
+                info!("[{alias}] 503 seen in last session, waiting 300s (WA Web 503 backoff)");
+                wait_for_network(Duration::from_secs(300), alias).await;
+            }
+
             let attempts = retry_count.fetch_add(1, Ordering::SeqCst) + 1;
             if attempts >= MAX_RETRIES {
                 error!("[{alias}] Max retries ({MAX_RETRIES}) exceeded, giving up");
                 return;
             }
 
-            let delay = std::cmp::min(3u64.pow(attempts), 300);
+            const RETRY_DELAYS: &[u64] = &[15, 30, 60, 120, 300, 600];
+            let delay = RETRY_DELAYS.get(attempts as usize - 1).copied().unwrap_or(600);
             info!("[{alias}] Reconnecting in {delay}s (attempt {attempts}/{MAX_RETRIES})");
             wait_for_network(Duration::from_secs(delay), alias).await;
         }
@@ -833,4 +885,31 @@ impl AccountManager {
     pub fn list_accounts(&self) -> Vec<String> {
         self.handles.keys().cloned().collect()
     }
+}
+
+fn extract_quoted_info(msg: &waproto::whatsapp::Message) -> (String, String, String) {
+    let base = msg.get_base_message();
+    macro_rules! try_extract {
+        ($($field:ident),+ $(,)?) => {
+            $(
+                if let Some(ref m) = base.$field {
+                    if let Some(ref ctx) = m.context_info {
+                        let quoted_id = ctx.stanza_id.clone().unwrap_or_default();
+                        let quoted_sender = ctx.participant.clone().unwrap_or_default();
+                        let quoted_text = ctx.quoted_message.as_ref()
+                            .and_then(|qm| qm.text_content())
+                            .unwrap_or("")
+                            .to_string();
+                        return (quoted_id, quoted_text, quoted_sender);
+                    }
+                }
+            )+
+        };
+    }
+    try_extract!(
+        extended_text_message, image_message, video_message,
+        audio_message, document_message, sticker_message,
+        ptv_message
+    );
+    (String::new(), String::new(), String::new())
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use turso::params::Params;
 use turso::Value;
 use whatsapp_rust::client::Client;
@@ -19,6 +19,13 @@ use crate::bridge::typing_sim::TypingSimulator;
 use crate::event_bus::EventBus;
 use crate::media;
 use waos_core::events::WaosEvent;
+
+#[derive(Clone, Default)]
+pub struct TimelockState {
+    pub is_active: bool,
+    pub enforcement_type: Option<String>,
+    pub expires_at: Option<String>,
+}
 
 #[derive(Clone, Debug)]
 pub struct QueueItem {
@@ -51,6 +58,7 @@ pub struct OutboundQueue {
     event_bus: EventBus,
     typing: TypingSimulator,
     accounts_dir: PathBuf,
+    timelock_states: Arc<Mutex<HashMap<String, TimelockState>>>,
 }
 
 impl OutboundQueue {
@@ -68,6 +76,25 @@ impl OutboundQueue {
             event_bus,
             typing: TypingSimulator::new(1500),
             accounts_dir,
+            timelock_states: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn set_timelock_state(
+        &self,
+        account: &str,
+        is_active: bool,
+        enforcement_type: Option<String>,
+        expires_at: Option<String>,
+    ) {
+        self.timelock_states.lock().await.insert(
+            account.to_string(),
+            TimelockState { is_active, enforcement_type, expires_at },
+        );
+        if is_active {
+            warn!("[{account}] Reach-out timelock recorded — outbound sends to unknown contacts will be blocked");
+        } else {
+            info!("[{account}] Reach-out timelock cleared");
         }
     }
 
@@ -178,6 +205,45 @@ impl OutboundQueue {
         let agent_jid = client.get_pn().map(|j| j.to_string()).unwrap_or_default();
         let client = client.clone();
         drop(clients);
+
+        // Timelock guard: block sends to unknown contacts when reach-out timelock is active.
+        {
+            let states = self.timelock_states.lock().await;
+            if let Some(state) = states.get(&item.account) {
+                if state.is_active {
+                    let user = chat_jid.user.as_str();
+                    match client.tc_token().get(user).await {
+                        Ok(Some(_)) => {
+                            info!(
+                                "[{}] Send to known contact {} (tctoken present) — allowed through timelock",
+                                item.account, user
+                            );
+                        }
+                        _ => {
+                            let reason = format!(
+                                "Reach-out timelock active. Contact '{}' has no privacy token (tctoken). \
+                                 Only contacts with prior conversation history can receive messages. \
+                                 Enforcement: {}, Expires: {}",
+                                user,
+                                state.enforcement_type.as_deref().unwrap_or("unknown"),
+                                state.expires_at.as_deref().unwrap_or("unknown"),
+                            );
+                            warn!("[{}] Blocked send to unknown contact {}: {}", item.account, user, reason);
+                            self.mark_status(&item.id, &item.account, "failed").await;
+                            self.event_bus.publish(WaosEvent::QueueItemStatusChanged {
+                                account: item.account.clone(),
+                                chat_id: item.chat_id.clone(),
+                                queue_id: item.id.clone(),
+                                status: "failed".into(),
+                                message_id: None,
+                                error: Some(reason.clone()),
+                            });
+                            return Err(anyhow::anyhow!("{reason}"));
+                        }
+                    }
+                }
+            }
+        }
 
         self.mark_status(&item.id, &item.account, "sending").await;
         self.event_bus.publish(WaosEvent::QueueItemStatusChanged {
@@ -377,7 +443,9 @@ impl OutboundQueue {
                         Ok(Some(row)) => {
                             if let Ok(Value::Text(jid_str)) = row.get_value(0) {
                                 if let Ok(jid) = Jid::from_str(&jid_str) {
-                                    jids.push(jid);
+                                    if jid.is_pn() || jid.is_lid() {
+                                        jids.push(jid);
+                                    }
                                 }
                             }
                         }
