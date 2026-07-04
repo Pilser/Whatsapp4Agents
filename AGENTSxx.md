@@ -137,7 +137,7 @@ let handle = bot.run().await?;
 **Reference sources:**
 - Full Bot lifecycle: `zeroclaw/crates/zeroclaw-channels/src/whatsapp_web.rs` (especially `listen()` at line ~1699)
 - Storage traits adapted from: `zeroclaw/crates/zeroclaw-channels/src/whatsapp_storage.rs`
-- wa-rs source: `whatsapp-rust/` (oxidezap fork, pinned at commit `cbcdd2a`)
+- wa-rs source: `whatsapp-rust/` (oxidezap fork, pinned at commit `4def659`)
 
 ## Hyper HTTP Server Pattern
 

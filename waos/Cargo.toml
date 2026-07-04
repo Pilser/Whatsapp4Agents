@@ -14,12 +14,12 @@ uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 
 # wa-rs — pin to same commit as zeroclaw
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
 
 # WAOS own deps
 dirs = "5"

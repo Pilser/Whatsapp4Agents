@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error};
 use turso::Connection;
+use waproto::whatsapp as wa;
 use waos_core::events::WaosEvent;
 
 use crate::event_bus::EventBus;
@@ -965,7 +966,7 @@ impl SyncEngine {
             } else {
                 for p in &conv.participant {
                     self.upsert_contact(conn, &p.user_jid, "", true).await?;
-                    let is_admin = p.rank.unwrap_or(0) != 0;
+                    let is_admin = matches!(p.rank, Some(wa::group_participant::Rank::Admin) | Some(wa::group_participant::Rank::SUPERADMIN));
                     conn.execute(
                         "INSERT OR IGNORE INTO group_participants (group_jid, participant_jid, is_admin, added_at) VALUES (?1, ?2, ?3, ?4)",
                         turso::params::Params::Positional(vec![
@@ -985,10 +986,7 @@ impl SyncEngine {
 
             // Store messages from this conversation
             for history_msg in &conv.messages {
-                let wmi = match &history_msg.message {
-                    Some(m) => m,
-                    None => continue,
-                };
+                let Some(wmi) = history_msg.message.as_option() else { continue };
                 let msg_id = match wmi.key.id.as_deref() {
                     Some(id) => id,
                     None => continue,
@@ -997,17 +995,18 @@ impl SyncEngine {
                     .or(wmi.key.remote_jid.as_deref())
                     .unwrap_or("");
                 let msg_ts = wmi.message_timestamp.unwrap_or(0) as i64;
-                let msg_content = wmi.message.as_ref()
+                let msg_content = wmi.message.as_option()
                     .and_then(|m| m.conversation.as_deref())
                     .unwrap_or("");
 
                 let sender_name = "";
-                let msg_status = match wmi.status.unwrap_or(1) {
-                    0 => "error",
-                    2 => "sent",
-                    3 => "delivered",
-                    4 => "read",
-                    5 => "played",
+                let msg_status = match wmi.status {
+                    Some(wa::web_message_info::Status::Error) => "error",
+                    Some(wa::web_message_info::Status::Pending) => "pending",
+                    Some(wa::web_message_info::Status::ServerAck) => "sent",
+                    Some(wa::web_message_info::Status::DeliveryAck) => "delivered",
+                    Some(wa::web_message_info::Status::Read) => "read",
+                    Some(wa::web_message_info::Status::Played) => "played",
                     _ => "pending",
                 };
                 conn.execute(

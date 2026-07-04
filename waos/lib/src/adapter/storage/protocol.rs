@@ -307,11 +307,11 @@ impl ProtocolStore for TursoStore {
         Ok(result)
     }
 
-    async fn delete_expired_tc_tokens(&self, cutoff_timestamp: i64) -> wacore::store::error::Result<u32> {
+    async fn delete_expired_tc_tokens(&self, token_cutoff: i64, sender_cutoff: i64) -> wacore::store::error::Result<u32> {
         let conn = self.conn.lock();
         let deleted = conn.execute(
-            "DELETE FROM tc_tokens WHERE token_timestamp < ?1 AND device_id = ?2",
-            Params::Positional(vec![Value::from(cutoff_timestamp), Value::from(self.device_id)]),
+            "DELETE FROM tc_tokens WHERE token_timestamp < ?1 AND sender_timestamp < ?2 AND device_id = ?3",
+            Params::Positional(vec![Value::from(token_cutoff), Value::from(sender_cutoff), Value::from(self.device_id)]),
         ).await.map_err(|e| wacore::store::error::StoreError::Database(Box::new(e)))?;
         u32::try_from(deleted).map_err(|_| wacore::store::error::StoreError::Validation("count overflow".into()))
     }

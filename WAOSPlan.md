@@ -1501,7 +1501,7 @@ Goal: The agent operates proactively.
 
 | Layer | Technology |
 |---|---|
-| WhatsApp Protocol | `whatsapp-rust` (oxidezap fork, commit `cbcdd2a`) — same pin as zeroclaw |
+| WhatsApp Protocol | `whatsapp-rust` (oxidezap fork, commit `4def659`) — same pin as zeroclaw |
 | Async Runtime | Tokio (multi-threaded) |
 | Storage | SQLite via `rusqlite` or `sqlx` |
 | Event Bus | `tokio::sync::broadcast` |
@@ -1517,7 +1517,7 @@ Goal: The agent operates proactively.
 
 ## What to Reuse from Zeroclaw
 
-Zeroclaw (zeroclaw-labs/zeroclaw) at commit `cbcdd2a` already has a working WhatsApp Web channel. Instead of building everything from scratch, reuse these proven implementations. File paths are relative to the zeroclaw repository root.
+Zeroclaw (zeroclaw-labs/zeroclaw) at commit `4def659` already has a working WhatsApp Web channel. Instead of building everything from scratch, reuse these proven implementations. File paths are relative to the zeroclaw repository root.
 
 ### 1. wa-rs Storage Trait Implementations
 
@@ -1573,15 +1573,15 @@ Adapt this for WAOS by writing to the replica DB instead of sending to an LLM ch
 
 **File:** `crates/zeroclaw-channels/Cargo.toml` (lines 131–153)
 
-Zeroclaw pins `oxidezap/whatsapp-rust` to commit `cbcdd2a6b931d804f3c2693554dce75e654834e3`:
+Zeroclaw pins `oxidezap/whatsapp-rust` to commit `4def65976a8d7ab7f429d6e3300201026f795b15`:
 
 ```toml
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
 ```
 
 Use the same commit pin (or newer) for WAOS to ensure compatibility.

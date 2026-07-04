@@ -247,26 +247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bincode"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36eaf5d7b090263e8150820482d5d93cd964a81e4019913c972f4edcc6edb740"
-dependencies = [
- "bincode_derive",
- "serde",
- "unty",
-]
-
-[[package]]
-name = "bincode_derive"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf95709a440f45e986983918d0e8a1f30a9b1df04918fc828670606804ac3c09"
-dependencies = [
- "virtue",
-]
-
-[[package]]
 name = "bindgen"
 version = "0.69.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -375,6 +355,62 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e426eb5cc1900033930ec955317b302e68f19f326cc7bb0c8a86865a826cdf0c"
 dependencies = [
  "rustc_version",
+]
+
+[[package]]
+name = "buffa"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33f29a40702df4b86ccd84211bfde8cee0bce6d0811450ade4a86a7d0958a23a"
+dependencies = [
+ "base64",
+ "bytes",
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+ "once_cell",
+ "rustversion",
+ "serde",
+ "serde_json",
+ "smoothutf8 0.1.1",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "buffa-build"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef33217cabddfad99c0a54d42ddb7ca5b73fa492f7b16ddb621132ef51107556"
+dependencies = [
+ "buffa",
+ "buffa-codegen",
+ "tempfile",
+]
+
+[[package]]
+name = "buffa-codegen"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6681b562b18ea719622d0d12684e88ecbdca600d517557dc7bcef7704631e28"
+dependencies = [
+ "buffa",
+ "buffa-descriptor",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "buffa-descriptor"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57ed423c4ecec86d1500879ce42e7e5f6def01bc632985ac756c1fd723fa21fc"
+dependencies = [
+ "buffa",
+ "rustversion",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1114,12 +1150,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "fixedbitset"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1358,6 +1388,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "foldhash 0.1.5",
+ "serde",
 ]
 
 [[package]]
@@ -2113,12 +2144,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "multimap"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
-
-[[package]]
 name = "murmurhash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2282,17 +2307,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
-name = "petgraph"
-version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8701b58ea97060d5e5b155d383a69952a60943f0e6dfe30b04c287beb0b27455"
-dependencies = [
- "fixedbitset",
- "hashbrown 0.15.5",
- "indexmap",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2403,23 +2417,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-build"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03da047801ff44bb6a4d407d4860c05fd70bb81714e6b2f3812603d5b145b042"
-dependencies = [
- "heck",
- "itertools 0.14.0",
- "log",
- "multimap",
- "petgraph",
- "prost",
- "prost-types",
- "regex",
- "tempfile",
-]
-
-[[package]]
 name = "prost-derive"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2430,15 +2427,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "prost-types"
-version = "0.14.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f94967dc7688f3054c7fac87473ffae4cc4c3904800e2d9f5b857246d8963b0a"
-dependencies = [
- "prost",
 ]
 
 [[package]]
@@ -3027,6 +3015,21 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "smoothutf8"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36358427d32ecdb1624616deed99eccfef0a167fe5bf40ddb51efe6980bc1ec8"
+dependencies = [
+ "simdutf8",
+]
+
+[[package]]
+name = "smoothutf8"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b4ec95892483d6d94284caccfddb9b77111a4dcac33ed25d624248def0fa5f1"
 
 [[package]]
 name = "socket2"
@@ -3919,12 +3922,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
-name = "unty"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
-
-[[package]]
 name = "ureq"
 version = "2.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4042,12 +4039,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "virtue"
-version = "0.0.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
-
-[[package]]
 name = "wacore"
 version = "0.6.0"
 dependencies = [
@@ -4057,6 +4048,8 @@ dependencies = [
  "async-lock",
  "async-trait",
  "base64",
+ "buffa",
+ "buffa-build",
  "bytes",
  "chrono",
  "compact_str",
@@ -4071,13 +4064,13 @@ dependencies = [
  "log",
  "md5",
  "portable-atomic",
- "prost",
  "rand 0.10.1",
  "serde",
  "serde-big-array",
  "serde_json",
  "sha1",
  "sha2 0.11.0",
+ "smoothutf8 0.2.3",
  "subtle",
  "thiserror 2.0.18",
  "typed-builder",
@@ -4094,12 +4087,12 @@ name = "wacore-appstate"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "buffa",
  "bytemuck",
  "hex",
  "hkdf",
  "hmac 0.13.0",
  "log",
- "prost",
  "serde",
  "serde-big-array",
  "serde_json",
@@ -4116,14 +4109,15 @@ version = "0.6.0"
 dependencies = [
  "bytes",
  "compact_str",
- "flate2",
  "hashify",
  "itoa",
  "serde",
  "serde_json",
  "smallvec",
+ "smoothutf8 0.2.3",
  "stable_deref_trait",
  "yoke",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -4143,6 +4137,7 @@ dependencies = [
  "arrayref",
  "async-lock",
  "async-trait",
+ "buffa",
  "bytes",
  "cbc",
  "chrono",
@@ -4155,7 +4150,6 @@ dependencies = [
  "hkdf",
  "hmac 0.13.0",
  "log",
- "prost",
  "rand 0.10.1",
  "serde",
  "sha1",
@@ -4172,10 +4166,10 @@ name = "wacore-noise"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "buffa",
  "bytes",
  "hkdf",
  "log",
- "prost",
  "rand 0.10.1",
  "sha2 0.11.0",
  "thiserror 2.0.18",
@@ -4248,11 +4242,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "buffa",
  "bytes",
  "chrono",
  "dirs",
  "parking_lot",
- "prost",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -4276,10 +4270,11 @@ dependencies = [
 name = "waproto"
 version = "0.6.0"
 dependencies = [
+ "buffa",
+ "buffa-build",
+ "buffa-descriptor",
+ "bytes",
  "heck",
- "prost",
- "prost-build",
- "prost-types",
  "serde",
  "sha2 0.11.0",
 ]
@@ -4371,6 +4366,7 @@ dependencies = [
  "async-lock",
  "async-trait",
  "base64",
+ "buffa",
  "bytes",
  "chrono",
  "event-listener",
@@ -4380,7 +4376,6 @@ dependencies = [
  "itoa",
  "log",
  "portable-atomic",
- "prost",
  "rand 0.10.1",
  "scopeguard",
  "serde",
@@ -4400,13 +4395,16 @@ name = "whatsapp-rust-sqlite-storage"
 version = "0.6.0"
 dependencies = [
  "async-trait",
- "bincode",
+ "buffa",
+ "buffa-build",
  "bytes",
  "diesel",
  "diesel_migrations",
  "libsqlite3-sys",
  "log",
+ "scheduled-thread-pool",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "wacore",
 ]
@@ -4851,9 +4849,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "977347db8caa080403f6b6b7c1cda9479a8e869316f7e13a59b19076a40f94e3"
+checksum = "5431d5661c32445236631278f27946e444ddafe4684cac70b185272d4f9c52d5"
 
 [[package]]
 name = "zmij"

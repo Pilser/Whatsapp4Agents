@@ -10,6 +10,10 @@
 !README.md
 !Initial-blue-print.md
 !client-fingerprinting-comparison.md
+!reverse-engineered-waweb-findings.md
+!Reverse-Engineered-whatsapp-web-status_protocol.md
+!Reverse-Engineered-whatsapp-web-status_sending_protocol.md
+
 
 # Allow source code directory
 #!src/

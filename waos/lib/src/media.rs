@@ -104,42 +104,42 @@ pub async fn upload_and_send(
 }
 
 fn add_context_info(msg: &mut wa::Message, quote_id: &str) {
-    let ctx = Box::new(wa::ContextInfo {
+    let ctx = || wa::ContextInfo {
         stanza_id: Some(quote_id.to_string()),
         ..Default::default()
-    });
-    if let Some(ref mut img) = msg.image_message {
-        img.context_info = Some(ctx);
-    } else if let Some(ref mut vid) = msg.video_message {
-        vid.context_info = Some(ctx);
-    } else if let Some(ref mut aud) = msg.audio_message {
-        aud.context_info = Some(ctx);
-    } else if let Some(ref mut doc) = msg.document_message {
-        doc.context_info = Some(ctx);
+    };
+    if let Some(ref mut img) = msg.image_message.as_option_mut() {
+        img.context_info = buffa::MessageField::some(ctx());
+    } else if let Some(ref mut vid) = msg.video_message.as_option_mut() {
+        vid.context_info = buffa::MessageField::some(ctx());
+    } else if let Some(ref mut aud) = msg.audio_message.as_option_mut() {
+        aud.context_info = buffa::MessageField::some(ctx());
+    } else if let Some(ref mut doc) = msg.document_message.as_option_mut() {
+        doc.context_info = buffa::MessageField::some(ctx());
     }
 }
 
 fn get_downloadable(msg: &wa::Message) -> Option<&dyn Downloadable> {
-    if let Some(ref img) = msg.image_message {
-        Some(img.as_ref() as &dyn Downloadable)
-    } else if let Some(ref doc) = msg.document_message {
-        Some(doc.as_ref() as &dyn Downloadable)
-    } else if let Some(ref audio) = msg.audio_message {
-        Some(audio.as_ref() as &dyn Downloadable)
-    } else if let Some(ref video) = msg.video_message {
-        Some(video.as_ref() as &dyn Downloadable)
-    } else if let Some(ref sticker) = msg.sticker_message {
-        Some(sticker.as_ref() as &dyn Downloadable)
+    if let Some(img) = msg.image_message.as_option() {
+        Some(img as &dyn Downloadable)
+    } else if let Some(doc) = msg.document_message.as_option() {
+        Some(doc as &dyn Downloadable)
+    } else if let Some(audio) = msg.audio_message.as_option() {
+        Some(audio as &dyn Downloadable)
+    } else if let Some(video) = msg.video_message.as_option() {
+        Some(video as &dyn Downloadable)
+    } else if let Some(sticker) = msg.sticker_message.as_option() {
+        Some(sticker as &dyn Downloadable)
     } else {
         None
     }
 }
 
 fn guess_extension(msg: &wa::Message) -> &'static str {
-    if msg.image_message.is_some() { "jpg" }
-    else if msg.video_message.is_some() { "mp4" }
-    else if msg.audio_message.is_some() { "ogg" }
-    else if msg.document_message.is_some() { "bin" }
+    if msg.image_message.is_set() { "jpg" }
+    else if msg.video_message.is_set() { "mp4" }
+    else if msg.audio_message.is_set() { "ogg" }
+    else if msg.document_message.is_set() { "bin" }
     else { "bin" }
 }
 
@@ -178,62 +178,67 @@ fn build_media_message(upload: &whatsapp_rust::upload::UploadResponse, media_typ
     let file_enc_sha256 = upload.file_enc_sha256.to_vec();
     let file_sha256 = upload.file_sha256.to_vec();
     let file_length = upload.file_length;
+    let media_key_timestamp = upload.media_key_timestamp;
 
     match media_type {
         "image" => wa::Message {
-            image_message: Some(Box::new(wa::message::ImageMessage {
+            image_message: buffa::MessageField::some(wa::message::ImageMessage {
                 url: Some(url),
                 direct_path: Some(direct_path),
                 media_key: Some(media_key),
                 file_enc_sha256: Some(file_enc_sha256),
                 file_sha256: Some(file_sha256),
                 file_length: Some(file_length),
+                media_key_timestamp: Some(media_key_timestamp),
                 mimetype: Some(mime.to_string()),
                 caption: caption.map(|c| c.to_string()),
                 ..Default::default()
-            })),
+            }),
             ..Default::default()
         },
         "video" => wa::Message {
-            video_message: Some(Box::new(wa::message::VideoMessage {
+            video_message: buffa::MessageField::some(wa::message::VideoMessage {
                 url: Some(url),
                 direct_path: Some(direct_path),
                 media_key: Some(media_key),
                 file_enc_sha256: Some(file_enc_sha256),
                 file_sha256: Some(file_sha256),
                 file_length: Some(file_length),
+                media_key_timestamp: Some(media_key_timestamp),
                 mimetype: Some(mime.to_string()),
                 caption: caption.map(|c| c.to_string()),
                 ..Default::default()
-            })),
+            }),
             ..Default::default()
         },
         "audio" => wa::Message {
-            audio_message: Some(Box::new(wa::message::AudioMessage {
+            audio_message: buffa::MessageField::some(wa::message::AudioMessage {
                 url: Some(url),
                 direct_path: Some(direct_path),
                 media_key: Some(media_key),
                 file_enc_sha256: Some(file_enc_sha256),
                 file_sha256: Some(file_sha256),
                 file_length: Some(file_length),
+                media_key_timestamp: Some(media_key_timestamp),
                 mimetype: Some(mime.to_string()),
                 ..Default::default()
-            })),
+            }),
             ..Default::default()
         },
         _ => wa::Message {
-            document_message: Some(Box::new(wa::message::DocumentMessage {
+            document_message: buffa::MessageField::some(wa::message::DocumentMessage {
                 url: Some(url),
                 direct_path: Some(direct_path),
                 media_key: Some(media_key),
                 file_enc_sha256: Some(file_enc_sha256),
                 file_sha256: Some(file_sha256),
                 file_length: Some(file_length),
+                media_key_timestamp: Some(media_key_timestamp),
                 mimetype: Some(mime.to_string()),
                 file_name: Some(filename.to_string()),
                 caption: caption.map(|c| c.to_string()),
                 ..Default::default()
-            })),
+            }),
             ..Default::default()
         },
     }

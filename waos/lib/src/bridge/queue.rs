@@ -372,11 +372,13 @@ impl OutboundQueue {
     }
 
     async fn send_status_text(&self, client: &Client, item: &QueueItem) -> anyhow::Result<SendResult> {
+        use buffa::Enumeration;
+        use waproto::whatsapp::message::extended_text_message::FontType;
         use whatsapp_rust::features::StatusSendOptions;
         let recipients = self.get_all_contacts(&item.account).await;
         let meta: serde_json::Value = serde_json::from_str(&item.metadata).unwrap_or_default();
         let bg = meta.get("bg").and_then(|v| u32::from_str_radix(&v.as_str().unwrap_or("FF1E6E4F").trim_start_matches("0x"), 16).ok()).unwrap_or(0xFF1E6E4F);
-        let font = meta.get("font").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let font = FontType::from_i32(meta.get("font").and_then(|v| v.as_i64()).unwrap_or(0) as i32).unwrap_or(FontType::System);
         self.anti_ban.pacer().wait().await;
         client.status().send_text(&item.content, bg, font, &recipients, StatusSendOptions::default())
             .await.map_err(|e| anyhow::anyhow!("Status text send failed: {e}"))

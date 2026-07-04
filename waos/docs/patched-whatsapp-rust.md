@@ -15,12 +15,12 @@ Add a `[patch]` section to `waos/Cargo.toml` that overrides the git deps with lo
 ```toml
 [workspace.dependencies]
 # keep the git deps as-is (lines 16-22) for documentation / fallback:
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
-whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "cbcdd2a6b931d804f3c2693554dce75e654834e3" }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+wacore-binary = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+waproto = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-tokio-transport = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
+whatsapp-rust-ureq-http-client = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "4def65976a8d7ab7f429d6e3300201026f795b15" }
 
 # ... other deps ...
 
@@ -148,14 +148,102 @@ if let Some((rx, phash)) = ack {
 
 Without this, the server 479 nack arrives after `send_status_message` already returned `Ok`, so waos stores the status as "posted" in `status_history` even though WhatsApp rejected it.
 
+## Patch 6: LID-to-PN Conversion for Status
+
+Two parts:
+
+### 6a: `wacore/src/send/status.rs` — `<to>` nodes in `ensure_status_participants`
+
+**Before** (~line 21):
+```rust
+.map(|jid| NodeBuilder::new("to").attr("jid", jid.to_non_ad()).build())
+```
+
+**After** (converts LID JIDs to PN):
+```rust
+.map(|jid| {
+    let user_jid = if jid.is_lid() {
+        group_info
+            .phone_jid_for_lid_user(&jid.user)
+            .cloned()
+            .unwrap_or_else(|| jid.to_non_ad())
+    } else {
+        jid.to_non_ad()
+    };
+    NodeBuilder::new("to").attr("jid", user_jid).build()
+})
+```
+
+### 6b: `src/send/mod.rs` — LID→PN map for LID recipients
+
+Adds a second loop in `send_status_message` after the existing PN→LID
+resolution to also map LID recipients back to their PN:
+```rust
+for (i, jid) in recipients.iter().enumerate() {
+    if jid.is_lid() {
+        if let Some(lid_jid) = &resolved[i] {
+            if let Ok(Some(entry)) = self.get_lid_pn_entry(jid).await {
+                lid_to_pn_map.insert(
+                    lid_jid.user.clone(),
+                    Jid::pn(entry.phone_number.as_ref()),
+                );
+            }
+        }
+    }
+}
+```
+
+## Patch 7: Always Include `<device-identity>` for Status
+
+**File:** `src/send/mod.rs` (inside `send_status_message`, ~line 836)
+
+WhatsApp Web always includes `<device-identity>` in the status stanza.
+Our code only added it when a prekey message was emitted (new device
+needing sender key). This builds the node unconditionally from the ADV
+account:
+
+```rust
+let mut extra_stanza_nodes = Vec::new();
+
+// Always include <device-identity> for status (WA Web always has it).
+if let Some(account) = account_info {
+    extra_stanza_nodes.push(
+        NodeBuilder::new("device-identity")
+            .bytes(account.encode_to_vec())
+            .build(),
+    );
+}
+
+if wacore::send::status_carries_privacy_meta(&message) {
+    extra_stanza_nodes.push(
+        NodeBuilder::new("meta")
+            .attr("status_setting", options.privacy.as_str())
+            .attr("session_scope", "status")
+            .build(),
+    );
+}
+```
+
+## Patch 8: Add `session_scope="status"` to `<meta>`
+
+**File:** `src/send/mod.rs` (same location as Patch 7)
+
+Added `.attr("session_scope", "status")` to the `<meta>` node. Applied
+together with Patch 7 in the same edit.
+
 ## Files that need changes
 
-| File | Change |
-|------|--------|
-| `waos/Cargo.toml` | Add `[patch]` section (this doc) |
-| `whatsapp-rust/src/client/lifecycle.rs:379` | Patch 1 — interruptible sleep |
-| `whatsapp-rust/src/client/node_io.rs:1085` | Patch 2 — 503 StreamError |
-| `whatsapp-rust/src/features/reachout_timelock.rs` | Patch 3 — new: MEX timelock query |
-| `whatsapp-rust/src/features/mod.rs` | Patch 3 — register module |
-| `wacore/src/store/device.rs:208` | Patch 4 — require_full_sync = false |
-| `whatsapp-rust/src/send/mod.rs:879` | Patch 5 — status ack wait |
+| File | Change | Patch |
+|------|--------|-------|
+| `waos/Cargo.toml` | Add `[patch]` section | — |
+| `whatsapp-rust/src/client/lifecycle.rs:379` | Interruptible sleep | 1 |
+| `whatsapp-rust/src/client/node_io.rs:1085` | 503 StreamError | 2 |
+| `whatsapp-rust/src/features/reachout_timelock.rs` | New: MEX timelock query | 3 |
+| `whatsapp-rust/src/features/mod.rs` | Register module | 3 |
+| `wacore/src/store/device.rs:208` | require_full_sync = false | 4 |
+| `whatsapp-rust/src/send/mod.rs:879` | Status ack wait | 5 |
+| `wacore/src/send/status.rs:21` | LID-to-PN in `<to>` nodes | 6a |
+| `whatsapp-rust/src/send/mod.rs:761` | LID→PN map for LID recipients | 6b |
+| `whatsapp-rust/src/send/mod.rs:836` | Always `<device-identity>` | 7 |
+| `whatsapp-rust/src/send/mod.rs:843` | `session_scope="status"` | 8 |
+| `waos/lib/src/media.rs:174` | `media_key_timestamp` in build_media_message | — |

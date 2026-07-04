@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use prost::Message;
+use buffa::Message;
 use turso::params::Params;
 use turso::Value;
 use wacore::libsignal::protocol::{KeyPair, PrivateKey, PublicKey};
-use wacore::store::device::CachedServerCertChain;
 use wacore::store::Device as CoreDevice;
 use wacore::store::traits::DeviceStore as DeviceStoreTrait;
 
@@ -149,7 +148,7 @@ impl DeviceStoreTrait for TursoStore {
                 adv_secret.copy_from_slice(&adv_secret_bytes);
 
                 let account = account_bytes
-                    .map(|b| waproto::whatsapp::AdvSignedDeviceIdentity::decode(&*b))
+                    .map(|b| waproto::whatsapp::ADVSignedDeviceIdentity::decode_from_slice(&b))
                     .transpose()
                     .map_err(|e| wacore::store::error::StoreError::Serialization(Box::new(e)))?;
 
@@ -200,7 +199,6 @@ impl DeviceStoreTrait for TursoStore {
     }
 
     async fn create(&self) -> wacore::store::error::Result<i32> {
-        use prost::Message;
         use wacore::libsignal::protocol::KeyPair;
         use wacore::store::Device as CoreDevice;
 

@@ -64,41 +64,40 @@ async fn wait_for_network(max_delay: Duration, alias: &str) -> bool {
 pub type ClientRegistry = Arc<Mutex<HashMap<String, Arc<Client>>>>;
 
 fn detect_message_type(msg: &waproto::whatsapp::Message) -> &'static str {
-    let base = msg.get_base_message();
-    if base.conversation.is_some() { "text" }
-    else if base.extended_text_message.is_some() { "extended_text" }
-    else if base.image_message.is_some() { "image" }
-    else if base.video_message.is_some() { "video" }
-    else if base.audio_message.is_some() { "audio" }
-    else if base.document_message.is_some() { "document" }
-    else if base.sticker_message.is_some() { "sticker" }
-    else if base.location_message.is_some() { "location" }
-    else if base.live_location_message.is_some() { "live_location" }
-    else if base.contact_message.is_some() || base.contacts_array_message.is_some() { "contact" }
-    else if base.reaction_message.is_some() { "reaction" }
-    else if base.poll_creation_message.is_some() { "poll" }
-    else if base.poll_update_message.is_some() { "poll_update" }
-    else if base.protocol_message.is_some() { "protocol" }
-    else if base.group_invite_message.is_some() { "group_invite" }
-    else if base.list_message.is_some() { "list" }
-    else if base.list_response_message.is_some() { "list_response" }
-    else if base.order_message.is_some() { "order" }
-    else if base.product_message.is_some() { "product" }
-    else if base.template_message.is_some() { "template" }
-    else if base.buttons_message.is_some() { "buttons" }
-    else if base.buttons_response_message.is_some() { "buttons_response" }
-    else if base.interactive_message.is_some() { "interactive" }
-    else if base.interactive_response_message.is_some() { "interactive_response" }
-    else if base.pin_in_chat_message.is_some() { "pin_in_chat" }
-    else if base.keep_in_chat_message.is_some() { "keep_in_chat" }
-    else if base.event_message.is_some() { "event" }
-    else if base.call.is_some() { "call" }
-    else if base.ptv_message.is_some() { "ptv" }
-    else if base.poll_creation_message_v2.is_some() { "poll" }
-    else if base.poll_creation_message_v3.is_some() { "poll" }
-    else if base.poll_creation_message_v4.is_some() { "poll" }
-    else if base.poll_creation_message_v5.is_some() { "poll" }
-    else if base.poll_creation_message_v6.is_some() { "poll" }
+    if msg.conversation.is_some() { "text" }
+    else if msg.extended_text_message.is_set() { "extended_text" }
+    else if msg.image_message.is_set() { "image" }
+    else if msg.video_message.is_set() { "video" }
+    else if msg.audio_message.is_set() { "audio" }
+    else if msg.document_message.is_set() { "document" }
+    else if msg.sticker_message.is_set() { "sticker" }
+    else if msg.location_message.is_set() { "location" }
+    else if msg.live_location_message.is_set() { "live_location" }
+    else if msg.contact_message.is_set() || msg.contacts_array_message.is_set() { "contact" }
+    else if msg.reaction_message.is_set() { "reaction" }
+    else if msg.poll_creation_message.is_set() { "poll" }
+    else if msg.poll_update_message.is_set() { "poll_update" }
+    else if msg.protocol_message.is_set() { "protocol" }
+    else if msg.group_invite_message.is_set() { "group_invite" }
+    else if msg.list_message.is_set() { "list" }
+    else if msg.list_response_message.is_set() { "list_response" }
+    else if msg.order_message.is_set() { "order" }
+    else if msg.product_message.is_set() { "product" }
+    else if msg.template_message.is_set() { "template" }
+    else if msg.buttons_message.is_set() { "buttons" }
+    else if msg.buttons_response_message.is_set() { "buttons_response" }
+    else if msg.interactive_message.is_set() { "interactive" }
+    else if msg.interactive_response_message.is_set() { "interactive_response" }
+    else if msg.pin_in_chat_message.is_set() { "pin_in_chat" }
+    else if msg.keep_in_chat_message.is_set() { "keep_in_chat" }
+    else if msg.event_message.is_set() { "event" }
+    else if msg.call.is_set() { "call" }
+    else if msg.ptv_message.is_set() { "ptv" }
+    else if msg.poll_creation_message_v2.is_set() { "poll" }
+    else if msg.poll_creation_message_v3.is_set() { "poll" }
+    else if msg.poll_creation_message_v4.is_set() { "poll" }
+    else if msg.poll_creation_message_v5.is_set() { "poll" }
+    else if msg.poll_creation_message_v6.is_set() { "poll" }
     else { "unknown" }
 }
 
@@ -359,45 +358,49 @@ impl AccountManager {
                                     cl.lock().await.remove(&a);
                                     e.publish(WaosEvent::Disconnected { account: a });
                                 }
-                                Event::Message(msg, info) => {
-                                    let content = msg.text_content().unwrap_or("").to_string();
-                                    let sender_jid = info.source.sender.to_string();
-                                    let sender_name = info.push_name.clone();
-                                    let chat_id = info.source.chat.to_string();
-                                    let timestamp = info.timestamp;
+                                Event::Messages(batch) => {
+                                    for inbound in batch {
+                                        let msg = &inbound.message;
+                                        let info = &inbound.info;
+                                        let content = msg.text_content().unwrap_or("").to_string();
+                                        let sender_jid = info.source.sender.to_string();
+                                        let sender_name = info.push_name.clone();
+                                        let chat_id = info.source.chat.to_string();
+                                        let timestamp = info.timestamp;
 
-                                    let mentions = mention_detector::extract_mentions(&content);
+                                        let mentions = mention_detector::extract_mentions(&content);
 
-                                    let message_type = detect_message_type(msg);
-                                    let media_caption = msg.get_caption().unwrap_or("").to_string();
+                                        let message_type = detect_message_type(msg);
+                                        let media_caption = msg.get_caption().unwrap_or("").to_string();
 
-                                    let has_media = msg.image_message.is_some()
-                                        || msg.video_message.is_some()
-                                        || msg.audio_message.is_some()
-                                        || msg.document_message.is_some()
-                                        || msg.sticker_message.is_some()
-                                        || msg.ptv_message.is_some();
+                                        let has_media = msg.image_message.is_set()
+                                            || msg.video_message.is_set()
+                                            || msg.audio_message.is_set()
+                                            || msg.document_message.is_set()
+                                            || msg.sticker_message.is_set()
+                                            || msg.ptv_message.is_set();
 
-                                    let (quoted_message_id, quoted_content, quoted_sender) = extract_quoted_info(&msg);
+                                        let (quoted_message_id, quoted_content, quoted_sender) = extract_quoted_info(&msg);
 
-                                    e.publish(WaosEvent::NewMessage {
-                                        account: a,
-                                        chat_id,
-                                        message_id: info.id.to_string(),
-                                        sender_jid,
-                                        sender_name,
-                                        content,
-                                        mentions,
-                                        has_media,
-                                        is_group: info.source.is_group,
-                                        is_from_me: info.source.is_from_me,
-                                        message_type: message_type.to_string(),
-                                        media_caption,
-                                        quoted_message_id,
-                                        quoted_content,
-                                        quoted_sender,
-                                        timestamp: timestamp.timestamp(),
-                                    });
+                                        e.publish(WaosEvent::NewMessage {
+                                            account: a.clone(),
+                                            chat_id,
+                                            message_id: info.id.to_string(),
+                                            sender_jid,
+                                            sender_name,
+                                            content,
+                                            mentions,
+                                            has_media,
+                                            is_group: info.source.is_group,
+                                            is_from_me: info.source.is_from_me,
+                                            message_type: message_type.to_string(),
+                                            media_caption,
+                                            quoted_message_id,
+                                            quoted_content,
+                                            quoted_sender,
+                                            timestamp: timestamp.timestamp(),
+                                        });
+                                    }
                                 }
                                 Event::LoggedOut(_) => {
                                     sr.store(true, Ordering::Relaxed);
@@ -562,7 +565,7 @@ impl AccountManager {
                                                 if let Some(hs) = lazy_hs.get() {
                                                     e.publish(WaosEvent::HistorySyncProgress {
                                                         account: a.clone(),
-                                                        sync_type: hs.sync_type,
+                                                        sync_type: hs.sync_type as i32,
                                                         progress: hs.progress,
                                                         chunk_order: hs.chunk_order,
                                                     });
@@ -888,15 +891,14 @@ impl AccountManager {
 }
 
 fn extract_quoted_info(msg: &waproto::whatsapp::Message) -> (String, String, String) {
-    let base = msg.get_base_message();
     macro_rules! try_extract {
         ($($field:ident),+ $(,)?) => {
             $(
-                if let Some(ref m) = base.$field {
-                    if let Some(ref ctx) = m.context_info {
+                if let Some(ref m) = msg.$field.as_option() {
+                    if let Some(ref ctx) = m.context_info.as_option() {
                         let quoted_id = ctx.stanza_id.clone().unwrap_or_default();
                         let quoted_sender = ctx.participant.clone().unwrap_or_default();
-                        let quoted_text = ctx.quoted_message.as_ref()
+                        let quoted_text = ctx.quoted_message.as_option()
                             .and_then(|qm| qm.text_content())
                             .unwrap_or("")
                             .to_string();

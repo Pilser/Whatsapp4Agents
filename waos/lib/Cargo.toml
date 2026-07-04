@@ -24,7 +24,7 @@ ureq = "2"
 async-trait = "0.1"
 parking_lot = "0.12"
 bytes = "1"
-prost = "0.14"
+buffa = "0.8"
 dirs = { workspace = true }
 toml = { workspace = true }
 rand = { workspace = true }
