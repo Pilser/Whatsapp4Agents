@@ -38,6 +38,29 @@ export function init() {
 
   els.form.addEventListener('submit', handleSubmit)
   els.input.addEventListener('input', autoGrow)
+  els.cancelBtn.addEventListener('click', handleCancel)
+  connection.setOnStateChange(onConnectionStateChange)
+}
+
+function showSendIcon() {
+  if (els.sendBtn) els.sendBtn.style.display = 'flex'
+  if (els.cancelBtn) els.cancelBtn.style.display = 'none'
+}
+
+function showStopIcon() {
+  if (els.sendBtn) els.sendBtn.style.display = 'none'
+  if (els.cancelBtn) els.cancelBtn.style.display = 'flex'
+}
+
+function onConnectionStateChange(evt) {
+  if (evt === 'done' || evt === 'error' || evt === 'disconnect') {
+    showSendIcon()
+  }
+}
+
+function handleCancel() {
+  connection.sendCancel()
+  showSendIcon()
 }
 
 async function handleRegister() {
@@ -95,6 +118,7 @@ function handleSubmit(e) {
   const text = els.input.value.trim()
   if (!text) return
   if (!connection.state.connected) { addMessage('error', 'Not connected to backend.'); return }
+  showStopIcon()
   addMessage('user', text)
   connection.send(text)
   streaming.showTyping()

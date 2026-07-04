@@ -16,4 +16,6 @@ export function init() {
   els.authError = document.getElementById('auth-error')
   els.logoutBtn = document.getElementById('logout-btn')
   els.exampleChips = document.getElementById('example-chips')
+  els.sendBtn = document.getElementById('send-btn')
+  els.cancelBtn = document.getElementById('cancel-btn')
 }

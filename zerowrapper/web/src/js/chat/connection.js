@@ -9,6 +9,9 @@ export const state = {
   connected: false,
 }
 
+export let onStateChange = null
+export function setOnStateChange(cb) { onStateChange = cb }
+
 function attachHandlers(ws) {
   ws.onopen = () => {
     state.connected = true
@@ -43,9 +46,11 @@ function attachHandlers(ws) {
           break
         case 'done':
           streaming.handleDone(data.content)
+          if (onStateChange) onStateChange('done')
           break
         case 'error':
           addMessage('error', data.message || data.error || 'Unknown error')
+          if (onStateChange) onStateChange('error')
           break
       }
     } catch (e2) {
@@ -58,6 +63,7 @@ function attachHandlers(ws) {
     streaming.reset()
     toolCalls.clearPending()
     if (els.hint) els.hint.style.display = 'block'
+    if (onStateChange) onStateChange('disconnect')
   }
 
   ws.onerror = () => {
@@ -65,6 +71,7 @@ function attachHandlers(ws) {
     streaming.reset()
     toolCalls.clearPending()
     if (els.hint) els.hint.style.display = 'block'
+    if (onStateChange) onStateChange('disconnect')
   }
 }
 
@@ -105,4 +112,9 @@ export function send(text) {
     user_id: authState.phone,
     content: text,
   }))
+}
+
+export function sendCancel() {
+  if (!state.connected || !state.ws) return
+  state.ws.send(JSON.stringify({ type: 'cancel' }))
 }

@@ -93,6 +93,11 @@ export function isActive() {
   return el !== null
 }
 
+export function cancel() {
+  finalize()
+  hideTyping()
+}
+
 export function reset() {
   if (el) {
     const parent = el.parentElement
