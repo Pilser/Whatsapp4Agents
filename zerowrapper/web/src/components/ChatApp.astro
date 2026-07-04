@@ -153,8 +153,14 @@ const { hero } = landing;
   :global(#lightbox.active) { opacity: 1; pointer-events: auto; }
   :global(#lightbox img) { max-width: 90vw; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
   :global(#lightbox .lb-loading) { color: rgba(255,255,255,0.6); font-size: 0.875rem; }
-  :global(#lightbox .lb-close) { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
-  :global(#lightbox .lb-close:hover) { background: rgba(255,255,255,0.3); }
+  :global(#lightbox .lb-close) { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; border: none; background: var(--color-bg-interactive-weak); color: #fff; font-size: 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+  :global(#lightbox .lb-close:hover) { background: var(--color-bg-interactive); }
+  :global(#lightbox .lb-prev),
+  :global(#lightbox .lb-next) { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--color-bg-interactive-weak); color: #fff; font-size: 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+  :global(#lightbox .lb-prev:hover),
+  :global(#lightbox .lb-next:hover) { background: var(--color-bg-interactive); }
+  :global(#lightbox .lb-prev) { left: 16px; }
+  :global(#lightbox .lb-next) { right: 16px; }
   #chat { }
   :global(html) {
     /* SCROLL_PADDING_BOTTOM: last messages scroll above the sticky form bar.
