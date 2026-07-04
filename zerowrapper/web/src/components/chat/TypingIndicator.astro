@@ -1,0 +1,20 @@
+<div id="typing-indicator" class="hidden" style="padding: 12px 16px 12px 52px; margin-bottom: 10px; position: relative;">
+  <div class="msg-avatar" style="position: absolute; left: 16px; top: 12px; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 1px solid var(--color-border-weak); background: var(--color-bg-weak);">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-weak)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 5h5l-4 3 1.5 5-4-3-4 3 1.5-5-4-3h5z"/></svg>
+  </div>
+  <div class="typing-dots">
+    <span class="dot"></span>
+    <span class="dot"></span>
+    <span class="dot"></span>
+  </div>
+</div>
+
+<style>
+  #typing-indicator.active { display: block; }
+  .typing-dots { display: flex; align-items: center; gap: 5px; padding: 2px 0; }
+  .typing-dots .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-weak); animation: typing-bounce 1.4s infinite ease-in-out both; }
+  .typing-dots .dot:nth-child(1) { animation-delay: -0.32s; }
+  .typing-dots .dot:nth-child(2) { animation-delay: -0.16s; }
+  .typing-dots .dot:nth-child(3) { animation-delay: 0s; }
+  @keyframes typing-bounce { 0%, 80%, 100% { transform: translateY(0) scale(0.6); } 40% { transform: translateY(-4px) scale(1); } }
+</style>
