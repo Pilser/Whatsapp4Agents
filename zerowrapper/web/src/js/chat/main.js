@@ -39,7 +39,7 @@ export function init() {
   els.form.addEventListener('submit', handleSubmit)
   els.input.addEventListener('input', autoGrow)
   els.cancelBtn.addEventListener('click', handleCancel)
-  connection.setOnStateChange(onConnectionStateChange)
+  streaming.setOnFinalize(showSendIcon)
 }
 
 function showSendIcon() {
@@ -50,12 +50,6 @@ function showSendIcon() {
 function showStopIcon() {
   if (els.sendBtn) els.sendBtn.style.display = 'none'
   if (els.cancelBtn) els.cancelBtn.style.display = 'flex'
-}
-
-function onConnectionStateChange(evt) {
-  if (evt === 'done' || evt === 'error' || evt === 'disconnect') {
-    showSendIcon()
-  }
 }
 
 function handleCancel() {

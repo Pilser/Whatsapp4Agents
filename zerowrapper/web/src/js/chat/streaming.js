@@ -8,6 +8,9 @@ let content = ''
 let thinking = ''
 let streamId = 0
 let renderPending = false
+let onFinalize = null
+
+export function setOnFinalize(cb) { onFinalize = cb }
 
 function getEl() {
   if (!el) {
@@ -58,7 +61,7 @@ export function handleChunk(text) {
 }
 
 export function finalize() {
-  if (!el) return
+  if (!el) { if (onFinalize) onFinalize(); return }
   const target = el
   let html = ''
   if (thinking) {
@@ -77,6 +80,7 @@ export function finalize() {
   content = ''
   thinking = ''
   streamId++
+  if (onFinalize) onFinalize()
 }
 
 export function finalizeIfActive() {
