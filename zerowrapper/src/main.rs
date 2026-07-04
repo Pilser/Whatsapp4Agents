@@ -21,7 +21,10 @@ async fn main() -> anyhow::Result<()> {
 
         let mcp = zw_mcp::McpRegistry::new();
         mcp.register_provider(Box::new(
-            mcp_web_files_render::WebFilesRenderProvider::new(cache)
+            mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
+        )).await;
+        mcp.register_provider(Box::new(
+            mcp_web_files_render::GetFilePathProvider::new(cache)
         )).await;
 
         tracing::info!("MCP-only mode — cache_dir={}", cache_dir);
@@ -35,6 +38,9 @@ async fn main() -> anyhow::Result<()> {
     let mcp = zw_mcp::McpRegistry::new();
     mcp.register_provider(Box::new(
         mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
+    )).await;
+    mcp.register_provider(Box::new(
+        mcp_web_files_render::GetFilePathProvider::new(cache.clone())
     )).await;
 
     if config.mcp.is_none() {

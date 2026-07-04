@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use crate::FileMeta;
 
 /// Hash a path string to produce a stable cache key.
-/// SHA-256 of the path bytes, URL-safe base64 encoded.
+/// SHA-256 of the path bytes, truncated to 8 bytes, URL-safe base64 encoded (11 chars).
 pub fn hash_path(path: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.as_bytes());
     let result = hasher.finalize();
-    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, result)
+    let truncated = &result[..8];
+    base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, truncated)
 }
 
 fn meta_path(cache_dir: &PathBuf, hash: &str) -> PathBuf {

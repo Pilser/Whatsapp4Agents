@@ -125,3 +125,79 @@ impl McpToolProvider for WebFilesRenderProvider {
         Ok(ToolOutput::new(result.to_string()))
     }
 }
+
+pub struct GetFilePathProvider {
+    cache: Arc<CacheManager>,
+}
+
+impl GetFilePathProvider {
+    pub fn new(cache: Arc<CacheManager>) -> Self {
+        Self { cache }
+    }
+}
+
+#[async_trait]
+impl McpToolProvider for GetFilePathProvider {
+    fn name(&self) -> &str {
+        "get_file_paths"
+    }
+
+    fn description(&self) -> &str {
+        "Look up original file paths by cache hash. Accepts an array of hashes, returns file path + hash for each. Errors per hash don't affect others."
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "hashes": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Array of cache hashes to look up"
+                }
+            },
+            "required": ["hashes"]
+        })
+    }
+
+    async fn call(&self, args: Value) -> anyhow::Result<ToolOutput> {
+        let hashes = args.get("hashes")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("Missing required argument: hashes"))?;
+
+        let mut files = Vec::new();
+        let mut errors = Vec::new();
+
+        for hash_val in hashes {
+            let hash = match hash_val.as_str() {
+                Some(h) => h,
+                None => {
+                    errors.push("Entry is not a string".to_string());
+                    continue;
+                }
+            };
+
+            match self.cache.get_meta(hash) {
+                Ok(Some(meta)) => {
+                    files.push(serde_json::json!({
+                        "hash": hash,
+                        "original_path": meta.original_path
+                    }));
+                }
+                Ok(None) => {
+                    errors.push(format!("Hash '{}' not found in cache", hash));
+                }
+                Err(e) => {
+                    errors.push(format!("Hash '{}': {}", hash, e));
+                }
+            }
+        }
+
+        let mut result = serde_json::json!({ "files": files });
+        if !errors.is_empty() {
+            result["errors"] = serde_json::json!(errors);
+        }
+
+        Ok(ToolOutput::new(result.to_string()))
+    }
+}
