@@ -6,10 +6,12 @@ import TypingIndicator from './chat/TypingIndicator.astro'
 import AuthSection from './chat/AuthSection.astro'
 import UserBadge from './chat/UserBadge.astro'
 import ChatForm from './chat/ChatForm.astro'
+import landing from '../data/landing.json' assert { type: 'json' };
+const { hero } = landing;
 ---
 
 <section
-  class="px-6 py-8 md:px-10 mb-2 md:mb-4 flex flex-col"
+  class="px-6 py-8 md:px-10 mb-2 md:mb-4"
   id="chat"
   style="border-top: 1px solid var(--color-border-weak);"
 >
@@ -17,10 +19,34 @@ import ChatForm from './chat/ChatForm.astro'
   <ExampleChips />
   <ChatMessages />
   <TypingIndicator />
-  <AuthSection />
-  <UserBadge />
-  <ChatForm />
-</section>
+
+  <div id="chat-bottom-bar" style="position: sticky; bottom: 0; z-index: 10; background: var(--color-bg); padding-top: 16px; margin-top: 8px; border-top: 1px solid var(--color-border-weak);">
+    <AuthSection />
+    <UserBadge />
+    <ChatForm />
+  </div>
+
+  <section class="pt-6 pb-2" style="margin-top: 24px;">
+    <h1 class="text-xl md:text-2xl font-bold mb-1" style="color: var(--color-text-strong);">{hero.title}</h1>
+    <p class="text-sm w-full leading-relaxed" style="color: var(--color-text);">{hero.description}</p>
+  </section>
+
+  <section id="faq-below" class="pt-6 pb-2" style="border-top: 1px solid var(--color-border-weak); margin-top: 24px;">
+    <h3 class="text-sm font-bold mb-4" style="color: var(--color-text-strong);">FAQ</h3>
+    <ul class="list-none p-0 m-0">
+      {landing.faq.map((item) => (
+        <li class="leading-relaxed" style="border-top: 1px solid var(--color-border-weak); padding: 10px 0;">
+          <details class="faq-item group">
+            <summary class="flex items-start gap-3 mb-1 font-medium cursor-pointer text-sm list-none" style="color: var(--color-text-strong);">
+              <span class="faq-icon flex-shrink-0" style="color: var(--color-text-weak);">[+]</span>
+              {item.q}
+            </summary>
+            <div class="ml-9 pb-2 text-sm leading-relaxed" style="color: var(--color-text);">{item.a}</div>
+          </details>
+        </li>
+      ))}
+    </ul>
+  </section>
 
 <style>
   :global(#chat-messages > .message-row) { display: flex; flex-direction: column; margin-bottom: 16px; animation: msg-slide-in 0.2s ease-out; }
@@ -128,10 +154,21 @@ import ChatForm from './chat/ChatForm.astro'
   #lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.5); }
   #lightbox .lb-close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
   #lightbox .lb-close:hover { background: rgba(255,255,255,0.3); }
-  #chat { flex: 1; display: flex; flex-direction: column; min-height: 90dvh; }
+  #chat { flex: 1; }
+  summary::marker { content: none; }
+  summary::-webkit-details-marker { display: none; }
 </style>
 
 <script>
   import { init } from '../js/chat/main.js'
   init()
+</script>
+
+<script>
+  document.querySelectorAll('.faq-item').forEach(function(d) {
+    var icon = d.querySelector('.faq-icon');
+    d.addEventListener('toggle', function() {
+      if (icon) icon.textContent = d.open ? '[-]' : '[+]';
+    });
+  });
 </script>

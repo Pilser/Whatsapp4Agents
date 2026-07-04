@@ -17,9 +17,7 @@ function extractMessageText(raw) {
   return raw
 }
 
-export function addMessage(role, text) {
-  finalize()
-
+function buildMessageRow(role, text) {
   const row = document.createElement('div')
   row.className = 'message-row ' + role
 
@@ -47,9 +45,24 @@ export function addMessage(role, text) {
     renderMarkdown(content, marked.parse(text || ''))
     row.appendChild(content)
   }
+  return row
+}
+
+export function addMessage(role, text, scroll = true) {
+  finalize()
+
+  const row = buildMessageRow(role, text)
   els.messages.appendChild(row)
   if (els.hint && els.hint.style.display !== 'none') els.hint.style.display = 'none'
-  row.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  if (scroll) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }
+}
+
+export function scrollToBottom() {
+  requestAnimationFrame(() => {
+    els.messages.scrollTop = els.messages.scrollHeight
+  })
 }
 
 export function fetchHistory() {
@@ -67,13 +80,15 @@ export function fetchHistory() {
         localStorage.setItem('zerowrapper_session', data.session_id)
       }
       if (!data.messages || data.messages.length === 0) return
+      const frag = document.createDocumentFragment()
       data.messages.forEach(msg => {
         if (msg.role === 'user' || msg.role === 'assistant') {
-          addMessage(msg.role, msg.role === 'assistant' ? msg.content : extractMessageText(msg.content))
+          const row = buildMessageRow(msg.role, msg.role === 'assistant' ? msg.content : extractMessageText(msg.content))
+          if (row) frag.appendChild(row)
         }
       })
-      els.messages.scrollTop = els.messages.scrollHeight
-      setTimeout(() => { els.messages.scrollTop = els.messages.scrollHeight }, 50)
+      els.messages.appendChild(frag)
+      scrollToBottom()
     })
     .catch(() => {})
 }
