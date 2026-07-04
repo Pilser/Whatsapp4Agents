@@ -55,6 +55,9 @@ export function wrapTables(el) {
 }
 
 export function render(el, html) {
+  html = html.replace(/<img\s/gi, '<img loading="lazy" ')
+  html = html.replace(/<iframe\s/gi, '<iframe loading="lazy" ')
+  html = html.replace(/<video\s/gi, '<video preload="none" ')
   el.innerHTML = html
   wrapTables(el)
   highlight(el)

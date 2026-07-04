@@ -155,6 +155,11 @@ const { hero } = landing;
   #lightbox .lb-close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; border: none; font-size: 1.25rem; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
   #lightbox .lb-close:hover { background: rgba(255,255,255,0.3); }
   #chat { }
+  :global(html) {
+    /* SCROLL_PADDING_BOTTOM: last messages scroll above the sticky form bar.
+       Increase this if there's still visible gap below the last message. */
+    scroll-padding-bottom: 180px;
+  }
   summary::marker { content: none; }
   summary::-webkit-details-marker { display: none; }
 </style>

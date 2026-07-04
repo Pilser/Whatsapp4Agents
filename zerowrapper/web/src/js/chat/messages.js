@@ -60,9 +60,10 @@ export function addMessage(role, text, scroll = true) {
 }
 
 export function scrollToBottom() {
-  requestAnimationFrame(() => {
-    els.messages.scrollTop = els.messages.scrollHeight
-  })
+  const lastMsg = els.messages.lastElementChild
+  if (lastMsg) {
+    lastMsg.scrollIntoView({ block: 'end' })
+  }
 }
 
 export function fetchHistory() {
