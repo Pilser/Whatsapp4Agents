@@ -1,7 +1,7 @@
 site:
   title: "PilserLab — AI Aness Agents"
-  url: "https://www.pilserlabs.com"
-  local_url: "http://localhost:3001"
+  url: "https://ai.pilserlabs.com"
+  local_url: "https://ai.pilserlabs.com"
   tagline: "AI Aness Agents from Rust"
   description: "PilserLab builds high-performance, memory-safe AI agents using Rust."
   logo: "/logo.svg"

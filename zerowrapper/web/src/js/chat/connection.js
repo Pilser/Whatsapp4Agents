@@ -15,6 +15,7 @@ export function setOnStateChange(cb) { onStateChange = cb }
 function attachHandlers(ws) {
   ws.onopen = () => {
     state.connected = true
+    console.log('[ws] connected to', ws.url)
     if (els.hint) els.hint.style.display = 'none'
     fetchHistory()
   }
@@ -58,18 +59,20 @@ function attachHandlers(ws) {
     }
   }
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
     state.connected = false
     streaming.reset()
     toolCalls.clearPending()
+    console.warn('[ws] closed: code=%s reason="%s" wasClean=%s', e.code, e.reason, e.wasClean)
     if (els.hint) els.hint.style.display = 'block'
     if (onStateChange) onStateChange('disconnect')
   }
 
-  ws.onerror = () => {
+  ws.onerror = (e) => {
     state.connected = false
     streaming.reset()
     toolCalls.clearPending()
+    console.error('[ws] error event:', e.type, 'readyState:', ws.readyState)
     if (els.hint) els.hint.style.display = 'block'
     if (onStateChange) onStateChange('disconnect')
   }

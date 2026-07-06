@@ -8,4 +8,7 @@ export default defineConfig({
   outDir: './dist',
   publicDir: './public',
   trailingSlash: 'always',
+  build: {
+    assets: 'pilser',
+  },
 });

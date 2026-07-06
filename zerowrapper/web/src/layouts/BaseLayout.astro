@@ -31,6 +31,49 @@ const { site } = settings;
         }
       })();
     </script>
+    <script is:inline>
+      (function(){
+        var log = function(tag, msg) { try { console.log('[load]', tag, msg) } catch(e) {} };
+        var perf = window.performance;
+
+        function dumpResources(label) {
+          if (!perf) { log(label, 'no perf API'); return; }
+          var all = perf.getEntriesByType('resource');
+          var pending = [];
+          for (var i = 0; i < all.length; i++) {
+            if (!all[i].responseEnd || all[i].responseEnd <= 0) {
+              pending.push(all[i].name);
+            }
+          }
+          log(label, 'readyState=' + document.readyState + ' total=' + all.length + ' pending=' + pending.length);
+          if (pending.length > 0) {
+            for (var i = 0; i < pending.length; i++) {
+              log(label, '  STUCK: ' + pending[i]);
+            }
+          }
+          log(label, 'ALL RESOURCES:');
+          for (var i = 0; i < all.length; i++) {
+            var e = all[i];
+            var dur = (e.responseEnd && e.responseEnd > 0) ? Math.round(e.responseEnd - e.startTime) + 'ms' : 'pending';
+            log(label, '  ' + e.name.split('/').pop() + ' -> ' + dur + ' (' + e.initiatorType + ')');
+          }
+        }
+
+        dumpResources('init');
+        setTimeout(function() { dumpResources('5s-timeout'); }, 5000);
+        setTimeout(function() { dumpResources('10s-timeout'); }, 10000);
+        setTimeout(function() { dumpResources('30s-timeout'); }, 30000);
+
+        window.addEventListener('load', function() {
+          log('event', 'window.load FIRED at ' + (perf && perf.now ? Math.round(perf.now()) + 'ms' : '?'));
+          dumpResources('on-load');
+        });
+
+        window.addEventListener('error', function(e) {
+          log('error', 'Uncaught: ' + (e.message || e.error || (e.target && e.target.src) || '?'));
+        }, true);
+      })();
+    </script>
     <style>
       #bg-canvas { position: fixed; inset: 0; z-index: 100; pointer-events: none; }
     </style>

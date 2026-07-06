@@ -6,9 +6,24 @@ import * as streaming from './streaming.js'
 import { addMessage } from './messages.js'
 import * as lightbox from './lightbox.js'
 
+function logPendingResources() {
+  const entries = performance.getEntriesByType('resource')
+  const pending = entries.filter(e => !e.responseEnd || e.responseEnd <= 0)
+  if (pending.length) {
+    console.warn('[resources] pending:', pending.map(r => r.name))
+  } else {
+    console.log('[resources] all', entries.length, 'resources loaded')
+  }
+  const fonts = document.fonts ? document.fonts.status : 'n/a'
+  console.log('[resources] readyState:', document.readyState, 'fonts:', fonts)
+}
+
 export function init() {
   dom.init()
   lightbox.init(els.messages)
+
+  logPendingResources()
+  setTimeout(logPendingResources, 3000)
 
   auth.loadFromStorage()
 
