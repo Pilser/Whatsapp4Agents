@@ -231,6 +231,117 @@ if wacore::send::status_carries_privacy_meta(&message) {
 Added `.attr("session_scope", "status")` to the `<meta>` node. Applied
 together with Patch 7 in the same edit.
 
+## Patch 9: ImageOptions — Add height/width/thumbnail fields
+
+**File:** `whatsapp-rust/src/media.rs`
+
+Added fields to `ImageOptions`:
+
+```rust
+pub struct ImageOptions {
+    pub caption: Option<String>,
+    pub mimetype: Option<String>,
+    pub jpeg_thumbnail: Option<Vec<u8>>,
+    pub context_info: Option<Box<wa::ContextInfo>>,
+    // --- new ---
+    pub height: Option<u32>,
+    pub width: Option<u32>,
+    pub view_once: Option<bool>,
+    pub thumbnail_direct_path: Option<String>,
+    pub thumbnail_sha256: Option<Vec<u8>>,
+    pub thumbnail_enc_sha256: Option<Vec<u8>>,
+}
+```
+
+Also updated `image_message()` to pass new fields into the protobuf (`height`, `width`, `view_once`, `thumbnail_direct_path`, `thumbnail_sha256`, `thumbnail_enc_sha256`).
+
+## Patch 10: VideoOptions — Add height/width/thumbnail fields
+
+**File:** `whatsapp-rust/src/media.rs`
+
+Added fields to `VideoOptions`:
+
+```rust
+pub struct VideoOptions {
+    pub caption: Option<String>,
+    pub mimetype: Option<String>,
+    pub jpeg_thumbnail: Option<Vec<u8>>,
+    pub duration_seconds: Option<u32>,
+    pub gif_playback: Option<bool>,
+    pub context_info: Option<Box<wa::ContextInfo>>,
+    // --- new ---
+    pub height: Option<u32>,
+    pub width: Option<u32>,
+    pub view_once: Option<bool>,
+    pub gif_attribution: Option<i32>,
+    pub thumbnail_direct_path: Option<String>,
+    pub thumbnail_sha256: Option<Vec<u8>>,
+    pub thumbnail_enc_sha256: Option<Vec<u8>>,
+}
+```
+
+Also updated `video_message()` to pass new fields into the protobuf (`height`, `width`, `view_once`, `gif_attribution` via `from_i32`, `thumbnail_direct_path`, `thumbnail_sha256`, `thumbnail_enc_sha256`).
+
+## Patch 11: status.rs — send_image/send_video accept media_opts
+
+**File:** `whatsapp-rust/src/features/status.rs`
+
+Both `send_image` and `send_video` now take an extra `media_opts` parameter
+(`ImageOptions` / `VideoOptions`) that merges with the inline caption and
+thumbnail so callers can pass dimensions, CDN thumbnail fields, etc.
+
+```rust
+pub async fn send_image(
+    &self, upload: UploadResponse, thumbnail: Vec<u8>,
+    caption: Option<&str>, recipients: &[Jid],
+    options: StatusSendOptions,
+    media_opts: crate::media::ImageOptions,   // <-- new
+) -> Result<SendResult, SendError>;
+
+pub async fn send_video(
+    &self, upload: UploadResponse, thumbnail: Vec<u8>,
+    duration_seconds: u32, caption: Option<&str>,
+    recipients: &[Jid], options: StatusSendOptions,
+    media_opts: crate::media::VideoOptions,   // <-- new
+) -> Result<SendResult, SendError>;
+```
+
+## Proto descriptor regeneration
+
+**File:** `waproto/src/whatsapp.desc` + `waproto/src/whatsapp.desc.sha256`
+
+The proto build pipeline (see `waproto/build.rs`) reads the `.desc` file at build time to generate Rust structs. After editing `whatsapp.proto`, run:
+
+```bash
+bash scripts/regenerate-proto-desc.sh
+```
+
+This wraps `protoc --descriptor_set_out` to produce a binary descriptor from the `.proto`, then writes the new SHA-256 checksum. `build.rs` verifies the checksum on every build — if proto and desc are out of sync, compilation fails with a hash mismatch error.
+
+Regenerated for Patch 12 because `DeviceListMetadata` fields 1-3 (`senderKeyHash`, `senderTimestamp`, `senderKeyIndexes`) were added to the proto and the desc had not been refreshed.
+
+## Patch 12: DeviceListMetadata in MessageContextInfo
+
+**File:** `wacore/src/reporting_token.rs:662`
+
+`reporting_context_info()` now accepts `account: Option<&wa::ADVSignedDeviceIdentity>` and populates:
+- `deviceListMetadata.senderKeyHash` = SHA-256 of the identity public key
+- `deviceListMetadata.senderTimestamp` = timestamp from decoded `ADVDeviceIdentity.details`
+- `deviceListMetadata.senderKeyIndexes` = key index from decoded `ADVDeviceIdentity`
+- `deviceListMetadataVersion = 2` on `MessageContextInfo`
+
+Updated callers in `wacore/src/send/dm.rs:99` and `wacore/src/send/group.rs:175` to pass `account`.
+
+## Patch 13 — REVERTED
+
+`<device-identity>` placement was kept at message level (original behavior). WA Web JS incoming parser reads `maybeChild("device-identity")` at the **message stanza level**, not inside `<to>`. Server-side normalization likely handles both, but original proven placement is safer.
+
+## Patch 14 — REVERTED
+
+`addressing_mode` on group stanzas was restored to original behavior. WA Web JS bundle
+could not confirm whether the attribute is sent or not (`[UNVERIFIED]` per audit). Original
+code was working, so reverted to avoid introducing risk.
+
 ## Files that need changes
 
 | File | Change | Patch |
@@ -247,3 +358,17 @@ together with Patch 7 in the same edit.
 | `whatsapp-rust/src/send/mod.rs:836` | Always `<device-identity>` | 7 |
 | `whatsapp-rust/src/send/mod.rs:843` | `session_scope="status"` | 8 |
 | `waos/lib/src/media.rs:174` | `media_key_timestamp` in build_media_message | — |
+| `whatsapp-rust/src/media.rs:21-42` | ImageOptions — height/width/thumbnail fields | 9 |
+| `whatsapp-rust/src/media.rs:100-127` | image_message() — pass new fields to proto | 9 |
+| `whatsapp-rust/src/media.rs:45-72` | VideoOptions — height/width/thumbnail/gif fields | 10 |
+| `whatsapp-rust/src/media.rs:131-163` | video_message() — pass new fields to proto | 10 |
+| `whatsapp-rust/src/features/status.rs:76-97` | send_image — media_opts param | 11 |
+| `whatsapp-rust/src/features/status.rs:104-127` | send_video — media_opts param | 11 |
+| `waos/lib/src/media.rs:30-100` | get_image_dimensions + probe_video_info helpers | — |
+| `waos/lib/src/bridge/queue.rs:387-405` | send_status_image: dims + CDN thumbnail upload | — |
+| `waos/lib/src/bridge/queue.rs:407-433` | send_status_video: dims+duration + CDN thumbnail upload | — |
+| `waproto/src/whatsapp.desc` + `.sha256` | Regenerated from proto after DeviceListMetadata changes | — |
+| `wacore/src/reporting_token.rs:662` | DeviceListMetadata in MessageContextInfo | 12 |
+| `wacore/src/send/dm.rs:99` | Pass account to reporting_context_info | 12 |
+| `wacore/src/send/group.rs:175` | Pass account to reporting_context_info | 12 |
+

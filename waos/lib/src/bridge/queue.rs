@@ -399,8 +399,20 @@ impl OutboundQueue {
         let upload = client.upload(data, MediaType::Image, UploadOptions::default()).await?;
         let recipients = self.get_all_contacts(&item.account).await;
         let caption = if item.content.is_empty() { None } else { Some(item.content.as_str()) };
+        let dims = media::get_image_dimensions(file_path);
+        let thumb_upload = client.upload(thumbnail.clone(), MediaType::Image, UploadOptions::default()).await.ok();
+        let mut media_opts = whatsapp_rust::media::ImageOptions::default();
+        if let Some((w, h)) = dims {
+            media_opts.width = Some(w);
+            media_opts.height = Some(h);
+        }
+        if let Some(tu) = thumb_upload {
+            media_opts.thumbnail_direct_path = Some(tu.direct_path);
+            media_opts.thumbnail_sha256 = Some(tu.file_sha256.to_vec());
+            media_opts.thumbnail_enc_sha256 = Some(tu.file_enc_sha256.to_vec());
+        }
         self.anti_ban.pacer().wait().await;
-        client.status().send_image(upload, thumbnail, caption, &recipients, StatusSendOptions::default())
+        client.status().send_image(upload, thumbnail, caption, &recipients, StatusSendOptions::default(), media_opts)
             .await.map_err(|e| anyhow::anyhow!("Status image send failed: {e}"))
     }
 
@@ -419,8 +431,24 @@ impl OutboundQueue {
         let upload = client.upload(data, MediaType::Video, UploadOptions::default()).await?;
         let recipients = self.get_all_contacts(&item.account).await;
         let caption = if item.content.is_empty() { None } else { Some(item.content.as_str()) };
+        let vinfo = media::probe_video_info(file_path);
+        let thumb_upload = client.upload(thumbnail.clone(), MediaType::Image, UploadOptions::default()).await.ok();
+        let mut media_opts = whatsapp_rust::media::VideoOptions::default();
+        if let Some((w, h, dur)) = vinfo {
+            media_opts.width = Some(w);
+            media_opts.height = Some(h);
+            media_opts.duration_seconds = Some(dur);
+        }
+        if media_opts.duration_seconds.is_none() {
+            media_opts.duration_seconds = Some(30);
+        }
+        if let Some(tu) = thumb_upload {
+            media_opts.thumbnail_direct_path = Some(tu.direct_path);
+            media_opts.thumbnail_sha256 = Some(tu.file_sha256.to_vec());
+            media_opts.thumbnail_enc_sha256 = Some(tu.file_enc_sha256.to_vec());
+        }
         self.anti_ban.pacer().wait().await;
-        client.status().send_video(upload, thumbnail, 30, caption, &recipients, StatusSendOptions::default())
+        client.status().send_video(upload, thumbnail, media_opts.duration_seconds.unwrap_or(30), caption, &recipients, StatusSendOptions::default(), media_opts)
             .await.map_err(|e| anyhow::anyhow!("Status video send failed: {e}"))
     }
 

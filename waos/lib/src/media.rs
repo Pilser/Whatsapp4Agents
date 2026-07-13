@@ -95,7 +95,13 @@ pub async fn upload_and_send(
     let mime = guess_mime(media_type, &filename);
     let upload = client.upload(data, mt, UploadOptions::default()).await?;
 
-    let mut msg = build_media_message(&upload, media_type, &mime, &filename, caption);
+    let dims: Option<(u32, u32, u32)> = match media_type {
+        "image" => get_image_dimensions(file_path).map(|(w, h)| (w, h, 0)),
+        "video" => probe_video_info(file_path),
+        _ => None,
+    };
+
+    let mut msg = build_media_message(&upload, media_type, &mime, &filename, caption, dims);
     if let Some(qid) = quote_id {
         add_context_info(&mut msg, qid);
     }
@@ -171,7 +177,92 @@ fn guess_mime(media_type: &str, filename: &str) -> String {
     }
 }
 
-fn build_media_message(upload: &whatsapp_rust::upload::UploadResponse, media_type: &str, mime: &str, filename: &str, caption: Option<&str>) -> wa::Message {
+/// Read image dimensions from JPEG or PNG file headers.
+/// Returns `(width, height)` or `None` if format is unsupported or unreadable.
+pub fn get_image_dimensions(path: &str) -> Option<(u32, u32)> {
+    let data = std::fs::read(path).ok()?;
+    if data.len() < 24 {
+        return None;
+    }
+    // JPEG: starts with FF D8
+    if data[0] == 0xFF && data[1] == 0xD8 {
+        let mut pos = 2;
+        while pos + 8 < data.len() {
+            if data[pos] != 0xFF {
+                return None;
+            }
+            let marker = data[pos + 1];
+            // SOF0, SOF1, SOF2, SOF3 (progressive)
+            if matches!(marker, 0xC0 | 0xC1 | 0xC2) {
+                let h = u16::from_be_bytes([data[pos + 5], data[pos + 6]]);
+                let w = u16::from_be_bytes([data[pos + 7], data[pos + 8]]);
+                return Some((w as u32, h as u32));
+            }
+            let seg_len = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
+            if seg_len < 2 {
+                return None;
+            }
+            pos += seg_len as usize + 2;
+        }
+        return None;
+    }
+    // PNG: 8-byte signature + IHDR chunk
+    if data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 {
+        let w = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+        let h = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+        return Some((w, h));
+    }
+    None
+}
+
+/// Probe video dimensions and duration using ffprobe.
+/// Returns `(width, height, duration_secs)` or `None` if ffprobe is unavailable.
+pub fn probe_video_info(path: &str) -> Option<(u32, u32, u32)> {
+    let output = std::process::Command::new("ffprobe")
+        .args([
+            "-v", "quiet",
+            "-print_format", "json",
+            "-show_streams",
+            "-show_format",
+            path,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let streams = json.get("streams")?.as_array()?;
+    let video_stream = streams.iter().find(|s| {
+        s.get("codec_type").and_then(|v| v.as_str()) == Some("video")
+    })?;
+    let width = video_stream.get("width")?.as_u64()? as u32;
+    let height = video_stream.get("height")?.as_u64()? as u32;
+    let duration_secs = json
+        .get("format")
+        .and_then(|f| f.get("duration"))
+        .and_then(|d| d.as_str())
+        .and_then(|d| d.parse::<f64>().ok())
+        .map(|s| s.ceil() as u32)
+        .or_else(|| {
+            video_stream
+                .get("duration")
+                .and_then(|d| d.as_str())
+                .and_then(|d| d.parse::<f64>().ok())
+                .map(|s| s.ceil() as u32)
+        })
+        .unwrap_or(0);
+    Some((width, height, duration_secs))
+}
+
+fn build_media_message(
+    upload: &whatsapp_rust::upload::UploadResponse,
+    media_type: &str,
+    mime: &str,
+    filename: &str,
+    caption: Option<&str>,
+    dims: Option<(u32, u32, u32)>,
+) -> wa::Message {
     let url = upload.url.clone();
     let direct_path = upload.direct_path.clone();
     let media_key = upload.media_key.to_vec();
@@ -181,35 +272,46 @@ fn build_media_message(upload: &whatsapp_rust::upload::UploadResponse, media_typ
     let media_key_timestamp = upload.media_key_timestamp;
 
     match media_type {
-        "image" => wa::Message {
-            image_message: buffa::MessageField::some(wa::message::ImageMessage {
-                url: Some(url),
-                direct_path: Some(direct_path),
-                media_key: Some(media_key),
-                file_enc_sha256: Some(file_enc_sha256),
-                file_sha256: Some(file_sha256),
-                file_length: Some(file_length),
-                media_key_timestamp: Some(media_key_timestamp),
-                mimetype: Some(mime.to_string()),
-                caption: caption.map(|c| c.to_string()),
+        "image" => {
+            let (w, h) = dims.map(|(w, h, _)| (w, h)).unwrap_or((0, 0));
+            wa::Message {
+                image_message: buffa::MessageField::some(wa::message::ImageMessage {
+                    url: Some(url),
+                    direct_path: Some(direct_path),
+                    media_key: Some(media_key),
+                    file_enc_sha256: Some(file_enc_sha256),
+                    file_sha256: Some(file_sha256),
+                    file_length: Some(file_length),
+                    media_key_timestamp: Some(media_key_timestamp),
+                    mimetype: Some(mime.to_string()),
+                    caption: caption.map(|c| c.to_string()),
+                    width: Some(w).filter(|&v| v > 0),
+                    height: Some(h).filter(|&v| v > 0),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
+            }
         },
-        "video" => wa::Message {
-            video_message: buffa::MessageField::some(wa::message::VideoMessage {
-                url: Some(url),
-                direct_path: Some(direct_path),
-                media_key: Some(media_key),
-                file_enc_sha256: Some(file_enc_sha256),
-                file_sha256: Some(file_sha256),
-                file_length: Some(file_length),
-                media_key_timestamp: Some(media_key_timestamp),
-                mimetype: Some(mime.to_string()),
-                caption: caption.map(|c| c.to_string()),
+        "video" => {
+            let (w, h, dur) = dims.unwrap_or((0, 0, 30));
+            wa::Message {
+                video_message: buffa::MessageField::some(wa::message::VideoMessage {
+                    url: Some(url),
+                    direct_path: Some(direct_path),
+                    media_key: Some(media_key),
+                    file_enc_sha256: Some(file_enc_sha256),
+                    file_sha256: Some(file_sha256),
+                    file_length: Some(file_length),
+                    media_key_timestamp: Some(media_key_timestamp),
+                    mimetype: Some(mime.to_string()),
+                    caption: caption.map(|c| c.to_string()),
+                    seconds: Some(dur),
+                    width: Some(w).filter(|&v| v > 0),
+                    height: Some(h).filter(|&v| v > 0),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
+            }
         },
         "audio" => wa::Message {
             audio_message: buffa::MessageField::some(wa::message::AudioMessage {
