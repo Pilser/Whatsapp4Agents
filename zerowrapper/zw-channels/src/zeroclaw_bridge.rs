@@ -112,21 +112,44 @@ impl ZeroClawBridge {
         Ok(conn)
     }
 
-    async fn format_prompt(&self, user_id: &str, channel: &str, prompt: &str) -> String {
+    async fn format_prompt(&self, user_id: &str, channel: &str, role: &str, attachments: &[zw_core::Attachment], prompt: &str) -> String {
         let customer = match self.db.get_user(user_id).await {
             Ok(Some(user)) if !user.name.is_empty() && user.name != "unknown" => user.name,
             _ => "unknown".to_string(),
         };
-        serde_json::json!({"customer": customer, "message": prompt, "channel": channel}).to_string()
+        let key = if role == "admin" || role == "owner" { "owner" } else { "customer" };
+        let mut envelope = serde_json::json!({
+            (key): customer,
+            "message": prompt,
+            "channel": channel,
+            "role": role,
+        });
+        if !attachments.is_empty() {
+            let attach: Vec<serde_json::Value> = attachments.iter().map(|a| {
+                let mut entry = serde_json::json!({
+                    "filename": a.filename,
+                    "mime_type": a.mime_type,
+                });
+                if !a.path.is_empty() {
+                    entry["path"] = serde_json::json!(a.path);
+                }
+                if !a.data.is_empty() {
+                    entry["data"] = serde_json::json!(a.data);
+                }
+                entry
+            }).collect();
+            envelope["attachments"] = serde_json::json!(attach);
+        }
+        envelope.to_string()
     }
 
-    pub async fn process_prompt(&self, session_id: &str, user_id: &str, agent_alias: &str, channel: &str, prompt: &str) -> anyhow::Result<String> {
+    pub async fn process_prompt(&self, session_id: &str, user_id: &str, agent_alias: &str, channel: &str, role: &str, attachments: &[zw_core::Attachment], prompt: &str) -> anyhow::Result<String> {
         let mut conn = self.connect().await?;
         let actual_session_id = conn.new_session(session_id, agent_alias).await?;
         if let Err(e) = self.db.upsert_session(&actual_session_id, user_id, agent_alias, None, None, "web").await {
             tracing::warn!("Failed to save session to DB: {}", e);
         }
-        let structured_prompt = self.format_prompt(user_id, channel, prompt).await;
+        let structured_prompt = self.format_prompt(user_id, channel, role, attachments, prompt).await;
         conn.prompt(&actual_session_id, &structured_prompt).await
     }
 
@@ -136,6 +159,8 @@ impl ZeroClawBridge {
         user_id: &str,
         agent_alias: &str,
         channel: &str,
+        role: &str,
+        attachments: &[zw_core::Attachment],
         prompt: &str,
         event_tx: mpsc::Sender<StreamEvent>,
     ) -> anyhow::Result<String> {
@@ -147,7 +172,7 @@ impl ZeroClawBridge {
         if let Err(e) = self.db.upsert_session(&actual_session_id, user_id, agent_alias, None, None, "web").await {
             tracing::warn!("Failed to save session to DB: {}", e);
         }
-        let structured_prompt = self.format_prompt(user_id, channel, prompt).await;
+        let structured_prompt = self.format_prompt(user_id, channel, role, attachments, prompt).await;
         conn.prompt_stream(&actual_session_id, &structured_prompt, &event_tx).await
     }
 

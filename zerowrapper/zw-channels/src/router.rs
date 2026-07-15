@@ -7,11 +7,11 @@ pub async fn route_incoming(
     msg: ChannelMessage,
     event_tx: Option<mpsc::Sender<StreamEvent>>,
 ) -> anyhow::Result<String> {
-    let session_id = build_session_id(&msg.channel, &msg.agent_alias, &msg.user_id);
+    let session_id = build_session_id(&msg.channel, &msg.agent_alias, &msg.user_id, &msg.role);
     let channel = &msg.channel;
     let result = match event_tx {
-        Some(tx) => zc.process_prompt_stream(&session_id, &msg.user_id, &msg.agent_alias, channel, &msg.content, tx).await?,
-        None => zc.process_prompt(&session_id, &msg.user_id, &msg.agent_alias, channel, &msg.content).await?,
+        Some(tx) => zc.process_prompt_stream(&session_id, &msg.user_id, &msg.agent_alias, channel, &msg.role, &msg.attachments, &msg.content, tx).await?,
+        None => zc.process_prompt(&session_id, &msg.user_id, &msg.agent_alias, channel, &msg.role, &msg.attachments, &msg.content).await?,
     };
     Ok(result)
 }
@@ -22,7 +22,12 @@ fn sanitize_key(raw: &str) -> String {
         .collect()
 }
 
-pub fn build_session_id(channel: &str, agent_alias: &str, user_id: &str) -> String {
-    let key = format!("{}.{}.{}", channel, agent_alias, user_id);
-    sanitize_key(&key)
+pub fn build_session_id(channel: &str, agent_alias: &str, user_id: &str, role: &str) -> String {
+    if role == "public" || role.is_empty() {
+        let key = format!("{}.{}.{}", channel, agent_alias, user_id);
+        sanitize_key(&key)
+    } else {
+        let key = format!("{}.{}.{}.{}", channel, agent_alias, user_id, role);
+        sanitize_key(&key)
+    }
 }

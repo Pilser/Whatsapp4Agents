@@ -105,16 +105,19 @@ export function disconnect() {
   abortHistoryFetch()
 }
 
-export function send(text) {
+export function send(text, role, attachments) {
   if (!state.connected || !state.ws) {
     addMessage('error', 'Not connected to backend.')
     return
   }
-  state.ws.send(JSON.stringify({
+  const payload = {
     session_id: authState.sessionId || '',
     user_id: authState.phone,
     content: text,
-  }))
+  }
+  if (role) payload.role = role
+  if (attachments && attachments.length > 0) payload.attachments = attachments
+  state.ws.send(JSON.stringify(payload))
 }
 
 export function sendCancel() {

@@ -2,6 +2,8 @@ pub mod migrations;
 pub mod users;
 pub mod sessions;
 
+pub use users::AccountSeed;
+
 use std::sync::Arc;
 use turso::{Connection, Database};
 use tokio::sync::Mutex;
@@ -38,5 +40,15 @@ impl DbPool {
 
     pub async fn conn(&self) -> tokio::sync::MutexGuard<'_, Connection> {
         self.conn.lock().await
+    }
+
+    pub async fn seed_accounts(&self, accounts: &std::collections::HashMap<String, crate::users::AccountSeed>) -> anyhow::Result<()> {
+        for (phone, account) in accounts {
+            self.upsert_user(phone, Some(&account.role), None).await?;
+            self.set_user_password(phone, &account.password).await?;
+            self.set_user_role(phone, &account.role).await?;
+            tracing::info!("Seeded account: {} role={}", phone, account.role);
+        }
+        Ok(())
     }
 }

@@ -2,11 +2,17 @@ use crate::DbPool;
 use turso::params::Params;
 use turso::Value;
 
+pub struct AccountSeed {
+    pub role: String,
+    pub password: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct UserRow {
     pub id: String,
     pub external_id: Option<String>,
     pub name: String,
+    pub role: String,
     pub created_at: String,
 }
 
@@ -31,7 +37,7 @@ impl DbPool {
     pub async fn get_user(&self, id: &str) -> anyhow::Result<Option<UserRow>> {
         let conn = self.conn().await;
         let mut rows = conn.query(
-            "SELECT id, external_id, name, created_at FROM users WHERE id = ?1",
+            "SELECT id, external_id, name, role, created_at FROM users WHERE id = ?1",
             Params::Positional(vec![Value::from(id)]),
         ).await?;
         if let Some(row) = rows.next().await? {
@@ -39,7 +45,8 @@ impl DbPool {
                 id: match row.get_value(0)? { Value::Text(s) => s, _ => String::new() },
                 external_id: match row.get_value(1)? { Value::Text(s) if !s.is_empty() => Some(s), _ => None },
                 name: match row.get_value(2)? { Value::Text(s) => s, _ => String::new() },
-                created_at: match row.get_value(3)? { Value::Text(s) => s, _ => String::new() },
+                role: match row.get_value(3)? { Value::Text(s) => s, _ => String::new() },
+                created_at: match row.get_value(4)? { Value::Text(s) => s, _ => String::new() },
             }))
         } else {
             Ok(None)
@@ -59,6 +66,42 @@ impl DbPool {
             }
         } else {
             Ok(None)
+        }
+    }
+
+    pub async fn set_user_password(&self, id: &str, password: &str) -> anyhow::Result<()> {
+        let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST)?;
+        let conn = self.conn().await;
+        conn.execute(
+            "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+            Params::Positional(vec![Value::from(hash), Value::from(id)]),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn set_user_role(&self, id: &str, role: &str) -> anyhow::Result<()> {
+        let conn = self.conn().await;
+        conn.execute(
+            "UPDATE users SET role = ?1 WHERE id = ?2",
+            Params::Positional(vec![Value::from(role), Value::from(id)]),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn verify_password(&self, id: &str, password: &str) -> anyhow::Result<bool> {
+        let conn = self.conn().await;
+        let mut rows = conn.query(
+            "SELECT password_hash FROM users WHERE id = ?1",
+            Params::Positional(vec![Value::from(id)]),
+        ).await?;
+        if let Some(row) = rows.next().await? {
+            let hash: String = match row.get_value(0)? { Value::Text(s) => s, _ => String::new() };
+            if hash.is_empty() {
+                return Ok(false);
+            }
+            Ok(bcrypt::verify(password, &hash)?)
+        } else {
+            Ok(false)
         }
     }
 }

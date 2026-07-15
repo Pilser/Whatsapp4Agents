@@ -96,6 +96,27 @@ async fn handle_ws_connection(
                 let content = parsed.get("content")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let role = parsed.get("role")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("public");
+
+                let attachments = parsed.get("attachments")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter().filter_map(|a| {
+                            let filename = a.get("filename").and_then(|v| v.as_str()).unwrap_or("file");
+                            let mime_type = a.get("mime_type").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");
+                            let path = a.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                            let data = a.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                            Some(zw_core::Attachment {
+                                filename: filename.to_string(),
+                                mime_type: mime_type.to_string(),
+                                data: data.as_bytes().to_vec(),
+                                path: path.to_string(),
+                            })
+                        }).collect()
+                    })
+                    .unwrap_or_default();
 
                 let msg = ChannelMessage {
                     channel: "web".to_string(),
@@ -103,7 +124,8 @@ async fn handle_ws_connection(
                     user_id: user_id.to_string(),
                     content: content.to_string(),
                     agent_alias: agent_alias.clone(),
-                    attachments: Vec::new(),
+                    role: role.to_string(),
+                    attachments,
                 };
 
                 // Create event channel for streaming

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use serde::Deserialize;
 
@@ -30,6 +31,22 @@ pub struct WebChannelConfig {
     /// Path to built frontend dist folder (optional)
     #[serde(default)]
     pub dist_path: Option<PathBuf>,
+    /// Pre-configured admin/owner accounts: phone -> {role, password}
+    #[serde(default)]
+    pub accounts: HashMap<String, AccountConfig>,
+    /// Directory for file uploads
+    #[serde(default = "default_upload_dir")]
+    pub upload_dir: PathBuf,
+}
+
+fn default_upload_dir() -> PathBuf {
+    PathBuf::from("./data/uploads")
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountConfig {
+    pub role: String,
+    pub password: String,
 }
 
 fn default_origins() -> Vec<String> {
@@ -63,6 +80,8 @@ impl Default for WrapperConfig {
                 bind: String::new(),
                 allowed_origins: vec![],
                 dist_path: None,
+                accounts: HashMap::new(),
+                upload_dir: default_upload_dir(),
             },
             mcp: None,
         }
@@ -155,6 +174,9 @@ impl WrapperConfig {
                             }
                             ("dist_path", toml::Value::String(v)) => {
                                 base.ch_web.dist_path = Some(PathBuf::from(v));
+                            }
+                            ("upload_dir", toml::Value::String(v)) => {
+                                base.ch_web.upload_dir = PathBuf::from(v);
                             }
                             _ => {}
                         }

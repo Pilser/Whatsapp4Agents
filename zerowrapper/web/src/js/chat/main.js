@@ -5,6 +5,7 @@ import * as connection from './connection.js'
 import * as streaming from './streaming.js'
 import { addMessage } from './messages.js'
 import * as lightbox from './lightbox.js'
+import * as owner from './owner.js'
 
 function logPendingResources() {
   const entries = performance.getEntriesByType('resource')
@@ -50,6 +51,8 @@ export function init() {
       els.form.dispatchEvent(new Event('submit', { cancelable: true }))
     })
   }
+
+  owner.init()
 
   els.form.addEventListener('submit', handleSubmit)
   els.input.addEventListener('input', autoGrow)

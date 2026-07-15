@@ -23,16 +23,18 @@ pub struct WebChannel {
     agent: String,
     cache: Arc<CacheManager>,
     dist_path: Option<PathBuf>,
+    upload_dir: PathBuf,
     db: DbPool,
 }
 
 impl WebChannel {
-    pub fn new(bind: &str, agent: &str, cache: Arc<CacheManager>, dist_path: Option<PathBuf>, db: DbPool) -> Self {
+    pub fn new(bind: &str, agent: &str, cache: Arc<CacheManager>, dist_path: Option<PathBuf>, upload_dir: PathBuf, db: DbPool) -> Self {
         Self {
             bind: bind.to_string(),
             agent: agent.to_string(),
             cache,
             dist_path,
+            upload_dir,
             db,
         }
     }
@@ -49,6 +51,7 @@ impl Channel for WebChannel {
         let cache = self.cache.clone();
         let ctx = Arc::new(ctx);
         let dist_path = self.dist_path.clone();
+        let upload_dir = self.upload_dir.clone();
         let agent = self.agent.clone();
         let db = self.db.clone();
 
@@ -58,11 +61,12 @@ impl Channel for WebChannel {
             let ctx = ctx.clone();
             let cache = cache.clone();
             let dist_path = dist_path.clone();
+            let upload_dir = upload_dir.clone();
             let agent = agent.clone();
             let db = db.clone();
             async move {
                 Ok::<_, Infallible>(service_fn(move |req| {
-                    handle_request(req, ctx.clone(), cache.clone(), dist_path.clone(), agent.clone(), db.clone())
+                    handle_request(req, ctx.clone(), cache.clone(), dist_path.clone(), upload_dir.clone(), agent.clone(), db.clone())
                 }))
             }
         });
@@ -78,6 +82,7 @@ async fn handle_request(
     ctx: Arc<ChannelContext>,
     cache: Arc<CacheManager>,
     dist_path: Option<PathBuf>,
+    upload_dir: PathBuf,
     agent: String,
     db: DbPool,
 ) -> Result<Response<Body>, Infallible> {
@@ -112,6 +117,14 @@ async fn handle_request(
         return Ok(handle_login(req, db.clone()).await);
     }
 
+    if path == "/api/admin/login" && req.method() == hyper::Method::POST {
+        return Ok(handle_admin_login(req, db.clone()).await);
+    }
+
+    if path == "/api/upload" && req.method() == hyper::Method::POST {
+        return Ok(handle_upload(req, upload_dir).await);
+    }
+
     if path == "/api/history" && req.method() == hyper::Method::GET {
         return Ok(handle_history(req, ctx.clone(), &agent).await);
     }
@@ -129,22 +142,26 @@ async fn handle_request(
 }
 
 async fn handle_history(req: Request<Body>, ctx: Arc<ChannelContext>, agent: &str) -> Response<Body> {
-    let user_id = req.uri().query()
-        .and_then(|q| {
-            for pair in q.split('&') {
-                let mut parts = pair.splitn(2, '=');
-                if parts.next() == Some("user_id") {
-                    return parts.next().map(|v| url_decode(v));
-                }
-            }
-            None
+    let query = req.uri().query().unwrap_or("");
+    let params: std::collections::HashMap<&str, &str> = query.split('&')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, '=');
+            let key = parts.next()?;
+            let val = parts.next().unwrap_or("");
+            Some((key, val))
         })
-        .unwrap_or_default();
+        .collect();
 
-    // Build the same session ID format used during prompt: web.agent.user_id
-    let session_id = format!("web.{}.{}", agent, sanitize_key(&user_id));
+    let user_id = params.get("user_id").map(|v| url_decode(v)).unwrap_or_default();
+    let role = params.get("role").map(|v| url_decode(v)).unwrap_or_else(|| "public".to_string());
 
-    tracing::info!("handle_history: user_id='{}' session_id='{}'", user_id, session_id);
+    let session_id = if role == "public" || role.is_empty() {
+        format!("web.{}.{}", agent, sanitize_key(&user_id))
+    } else {
+        format!("web.{}.{}.{}", agent, sanitize_key(&user_id), sanitize_key(&role))
+    };
+
+    tracing::info!("handle_history: user_id='{}' role='{}' session_id='{}'", user_id, role, session_id);
 
     if user_id.is_empty() {
         tracing::warn!("handle_history: missing user_id");
@@ -264,7 +281,8 @@ async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
                 .body(Body::from(json!({
                     "exists": true,
                     "phone": user.id,
-                    "name": display_name
+                    "name": display_name,
+                    "role": user.role
                 }).to_string()))
                 .unwrap()
         }
@@ -284,6 +302,158 @@ async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
                 .unwrap()
         }
     }
+}
+
+async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
+    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"error": format!("Failed to read body: {}", e)}).to_string()))
+                .unwrap();
+        }
+    };
+
+    let parsed: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"error": format!("Invalid JSON: {}", e)}).to_string()))
+                .unwrap();
+        }
+    };
+
+    let phone = parsed.get("phone").and_then(|v| v.as_str()).unwrap_or("");
+    let password = parsed.get("password").and_then(|v| v.as_str()).unwrap_or("");
+
+    if phone.is_empty() || password.is_empty() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"error": "Missing phone or password"}).to_string()))
+            .unwrap();
+    }
+
+    match db.verify_password(phone, password).await {
+        Ok(true) => {
+            match db.get_user(phone).await {
+                Ok(Some(user)) => {
+                    let display_name = if user.name.is_empty() { phone.to_string() } else { user.name };
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(json!({
+                            "ok": true,
+                            "phone": user.id,
+                            "name": display_name,
+                            "role": user.role
+                        }).to_string()))
+                        .unwrap()
+                }
+                Ok(None) => {
+                    Response::builder()
+                        .status(StatusCode::UNAUTHORIZED)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(json!({"error": "User not found"}).to_string()))
+                        .unwrap()
+                }
+                Err(e) => {
+                    tracing::warn!("handle_admin_login: db error: {}", e);
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(json!({"error": "Database error"}).to_string()))
+                        .unwrap()
+                }
+            }
+        }
+        Ok(false) => {
+            Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"error": "Invalid credentials"}).to_string()))
+                .unwrap()
+        }
+        Err(e) => {
+            tracing::warn!("handle_admin_login: db error: {}", e);
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"error": "Database error"}).to_string()))
+                .unwrap()
+        }
+    }
+}
+
+async fn handle_upload(req: Request<Body>, upload_dir: PathBuf) -> Response<Body> {
+    let filename = req.headers()
+        .get("X-Filename")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("upload")
+        .to_string();
+
+    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
+        Ok(b) => b,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json!({"error": format!("Failed to read body: {}", e)}).to_string()))
+                .unwrap();
+        }
+    };
+
+    if body_bytes.is_empty() {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"error": "Empty file"}).to_string()))
+            .unwrap();
+    }
+
+    tokio::fs::create_dir_all(&upload_dir).await.unwrap_or_default();
+
+    let now = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let safe_name = filename.chars()
+        .map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect::<String>();
+    let ext = std::path::Path::new(&safe_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin");
+    let stem = std::path::Path::new(&safe_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let dest_name = format!("{}_{}.{}", stem, now, ext);
+    let dest_path = upload_dir.join(&dest_name);
+    tracing::info!("Saving uploaded file to {:?}", dest_path);
+
+    if let Err(e) = tokio::fs::write(&dest_path, &body_bytes).await {
+        return Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .header("Content-Type", "application/json")
+            .body(Body::from(json!({"error": format!("Failed to save file: {}", e)}).to_string()))
+            .unwrap();
+    }
+
+    let abs_path = std::fs::canonicalize(&dest_path)
+        .unwrap_or_else(|_| dest_path.clone());
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(Body::from(json!({
+            "filename": safe_name,
+            "path": abs_path.to_string_lossy().to_string(),
+            "size": body_bytes.len(),
+            "mime_type": mime_guess::from_path(&safe_name).first_or_octet_stream().to_string()
+        }).to_string()))
+        .unwrap()
 }
 
 fn sanitize_key(raw: &str) -> String {

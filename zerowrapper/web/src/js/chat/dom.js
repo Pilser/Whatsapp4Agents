@@ -18,4 +18,10 @@ export function init() {
   els.exampleChips = document.getElementById('example-chips')
   els.sendBtn = document.getElementById('send-btn')
   els.cancelBtn = document.getElementById('cancel-btn')
+  els.ownerBtn = document.getElementById('owner-btn')
+  els.ownerBtnMobile = document.getElementById('owner-btn-mobile')
+  els.ownerLoginOverlay = document.getElementById('owner-login-overlay')
+  els.ownerChat = document.getElementById('owner-chat')
+  els.ownerRoleBadge = document.getElementById('owner-role-badge')
+  els.ownerBackBtn = document.getElementById('owner-back-btn')
 }

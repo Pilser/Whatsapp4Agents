@@ -54,11 +54,18 @@ async fn main() -> anyhow::Result<()> {
     db.migrate().await?;
     tracing::info!("Database migrated");
 
+    if !config.ch_web.accounts.is_empty() {
+        let seeds: std::collections::HashMap<String, zw_db::AccountSeed> = config.ch_web.accounts.iter().map(|(k, v)| {
+            (k.clone(), zw_db::AccountSeed { role: v.role.clone(), password: v.password.clone() })
+        }).collect();
+        db.seed_accounts(&seeds).await?;
+    }
+
     let zeroclaw = zw_channels::ZeroClawBridge::new(&config.zeroclaw_socket, db.clone());
     let mut channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
 
     channels.register(Box::new(
-        ch_web::WebChannel::new(&config.ch_web.bind, &config.ch_web.agent, cache, config.ch_web.dist_path.clone(), db.clone())
+        ch_web::WebChannel::new(&config.ch_web.bind, &config.ch_web.agent, cache, config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
     ));
 
     let zc_handle = tokio::spawn(async move {

@@ -37,6 +37,13 @@ const { site } = settings;
           style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak); border-right: 1px solid var(--color-border-weak);"
         >pilserlabs.com</a>
       </li>
+      <li class="flex items-stretch">
+        <button
+          id="owner-btn"
+          class="flex items-center no-underline px-5 text-sm transition cursor-pointer"
+          style="color: var(--color-bg-interactive); border-left: 1px solid var(--color-border-weak); background: none; font-family: inherit;"
+        >I Own</button>
+      </li>
     </ul>
   </nav>
 
@@ -69,6 +76,7 @@ const { site } = settings;
     <li><a href="#chat" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">Ask AI</a></li>
     <li><a href="#faq" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">FAQ</a></li>
     <li><a href={site.url} target="_blank" rel="noopener" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak);">pilserlabs.com</a></li>
+    <li><button id="owner-btn-mobile" class="mobile-link block w-full text-left px-6 py-4 no-underline text-sm cursor-pointer" style="color: var(--color-bg-interactive); background: none; border: none; border-bottom: 1px solid var(--color-border-weak); font-family: inherit;">I Own</button></li>
   </ul>
 </nav>
 

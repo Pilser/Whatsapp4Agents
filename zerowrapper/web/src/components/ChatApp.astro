@@ -6,6 +6,7 @@ import TypingIndicator from './chat/TypingIndicator.astro'
 import AuthSection from './chat/AuthSection.astro'
 import UserBadge from './chat/UserBadge.astro'
 import ChatForm from './chat/ChatForm.astro'
+import OwnerLogin from './OwnerLogin.astro'
 import landing from '../data/landing.json' assert { type: 'json' };
 const { hero } = landing;
 ---
@@ -171,10 +172,12 @@ const { hero } = landing;
   summary::-webkit-details-marker { display: none; }
 </style>
 
-<script>
-  import { init } from '../js/chat/main.js'
-  init()
-</script>
+  <OwnerLogin />
+
+  <script>
+    import { init } from '../js/chat/main.js'
+    init()
+  </script>
 
 <script>
   document.querySelectorAll('.faq-item').forEach(function(d) {

@@ -14,6 +14,13 @@ allowed_origins = ["*"]
 agent = "craw"
 # Path to built frontend dist (Astro build output: web/dist/)
 dist_path = "./web/dist"
+# Directory for file uploads (also settable via ZEROWRAPPER_CH_WEB__UPLOAD_DIR)
+upload_dir = "./data/uploads"
+
+# Pre-configured admin/owner accounts
+[zerowrapper.ch_web.accounts]
+"256757337153" = { role = "owner", password = "admin123" }
+# "256700000000" = { role = "admin", password = "admin456" }
 
 # MCP discovery — how zeroclaw should spawn us (optional)
 # If missing, a warning is logged with configuration guidance

@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import Header from '../components/Header.astro';
 import ChatApp from '../components/ChatApp.astro';
+import OwnerChat from '../components/OwnerChat.astro';
 import Footer from '../components/Footer.astro';
 import landing from '../data/landing.json' assert { type: 'json' };
 import settings from '../data/sitesettings.json' assert { type: 'json' };
@@ -23,6 +24,7 @@ import settings from '../data/sitesettings.json' assert { type: 'json' };
         </main>
         <Footer />
       </div>
+      <OwnerChat />
   </div>
 
   <script type="application/json" id="landing-data" set:html={JSON.stringify(landing)}></script>

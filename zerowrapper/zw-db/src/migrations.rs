@@ -20,4 +20,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'public';",
+    "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';",
 ];

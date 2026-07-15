@@ -12,6 +12,7 @@ pub struct ChannelMessage {
     pub content: String,
     /// Which zeroclaw agent this message is for
     pub agent_alias: String,
+    pub role: String,
     pub attachments: Vec<Attachment>,
 }
 
@@ -19,7 +20,10 @@ pub struct ChannelMessage {
 pub struct Attachment {
     pub filename: String,
     pub mime_type: String,
+    #[serde(default)]
     pub data: Vec<u8>,
+    #[serde(default)]
+    pub path: String,
 }
 
 /// Events streamed from the ZeroClaw daemon to the WebSocket client during a prompt.
