@@ -178,6 +178,11 @@ impl WrapperConfig {
                             ("upload_dir", toml::Value::String(v)) => {
                                 base.ch_web.upload_dir = PathBuf::from(v);
                             }
+                            ("accounts", val) => {
+                                if let Ok(accts) = val.clone().try_into::<HashMap<String, AccountConfig>>() {
+                                    base.ch_web.accounts = accts;
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -214,8 +219,8 @@ fn env_lines_to_toml(content: &str) -> String {
             let keystr = key.trim();
             let valstr = value.trim().trim_matches('"').trim_matches('\'');
             if let Some(rest) = keystr.strip_prefix("ZEROWRAPPER_") {
-                if rest.starts_with("__") {
-                    let field = rest[2..].to_lowercase();
+                if rest.starts_with('_') {
+                    let field = rest[1..].to_lowercase();
                     sections
                         .entry(String::new())
                         .or_default()
