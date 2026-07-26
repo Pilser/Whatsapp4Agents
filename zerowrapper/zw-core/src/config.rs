@@ -94,8 +94,8 @@ struct ConfigFile {
 }
 
 impl WrapperConfig {
-    /// Load config from config.toml, then overlay .env.
-    /// config.toml is optional — .env alone is sufficient.
+    /// Load config from config.toml, then overlay .env file, then OS env vars.
+    /// config.toml is optional — .env or OS env vars alone are sufficient.
     pub fn load() -> anyhow::Result<Self> {
         let mut config = Self::load_toml("config.toml")
             .unwrap_or_else(|| {
@@ -105,6 +105,10 @@ impl WrapperConfig {
 
         if let Some(env_overlay) = Self::load_env()? {
             config = Self::merge_configs(config, env_overlay);
+        }
+
+        if let Some(os_overlay) = Self::load_os_env()? {
+            config = Self::merge_configs(config, os_overlay);
         }
 
         let missing: Vec<&str> = {
@@ -145,6 +149,26 @@ impl WrapperConfig {
             return Ok(None);
         }
 
+        let value: toml::Value = toml::from_str(&toml_str)?;
+        Ok(Some(value))
+    }
+
+    /// Read ZEROWRAPPER_* vars from actual OS environment (Docker -e / export).
+    fn load_os_env() -> anyhow::Result<Option<toml::Value>> {
+        let pairs: Vec<(String, String)> = std::env::vars()
+            .filter(|(k, _)| k.starts_with("ZEROWRAPPER_"))
+            .collect();
+        if pairs.is_empty() {
+            return Ok(None);
+        }
+        let mut content = String::new();
+        for (k, v) in &pairs {
+            content.push_str(&format!("{}={}\n", k, v));
+        }
+        let toml_str = env_lines_to_toml(&content);
+        if toml_str.trim().is_empty() {
+            return Ok(None);
+        }
         let value: toml::Value = toml::from_str(&toml_str)?;
         Ok(Some(value))
     }
