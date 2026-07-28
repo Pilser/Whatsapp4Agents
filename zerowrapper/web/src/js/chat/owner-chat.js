@@ -1,10 +1,9 @@
+import * as network from './network.js'
 import { marked } from 'marked'
 import { render as renderMarkdown } from './markdown.js'
 import { USER_AVATAR, BOT_AVATAR, THINK_ICON, TOOL_ICON, escapeHtml } from './constants.js'
 
 export const state = {
-  ws: null,
-  connected: false,
   sessionId: '',
   phone: '',
   role: '',
@@ -295,65 +294,64 @@ function ownerFetchHistory() {
 }
 
 export function connectOwnerWs() {
-  if (state.ws) { state.ws.close(); resetStreaming(); pendingToolCalls.clear() }
+  if (network.getState() !== network.State.DISCONNECTED) network.disconnect()
   resetStreaming()
   pendingToolCalls.clear()
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const ws = new WebSocket(protocol + '//' + location.host + '/ws')
-  state.ws = ws
+  const url = protocol + '//' + location.host + '/ws'
 
-  ws.onopen = () => {
-    state.connected = true
-    const hint = getHint()
-    if (hint) hint.style.display = 'none'
-    ownerFetchHistory()
-  }
-
-  ws.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data)
-      switch (data.type) {
-        case 'session_created':
-          if (data.session_id && data.session_id !== state.sessionId) state.sessionId = data.session_id
-          break
-        case 'thinking':
-          handleThinking(data.content)
-          break
-        case 'chunk':
-          handleChunk(data.content)
-          break
-        case 'tool_call':
-          handleToolCall(data.tool_call_id, data.name, data.args)
-          break
-        case 'tool_result':
-          handleToolResult(data.tool_call_id, data.name, data.output)
-          break
-        case 'done':
-          handleDone(data.content)
-          break
-        case 'error':
-          addMessage('error', data.message || data.error || 'Unknown error')
-          break
+  network.connect(url, {
+    onOpen: () => {
+      const hint = getHint()
+      if (hint) hint.style.display = 'none'
+      ownerFetchHistory()
+    },
+    onMessage: (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        switch (data.type) {
+          case 'session_created':
+            if (data.session_id && data.session_id !== state.sessionId) state.sessionId = data.session_id
+            break
+          case 'thinking':
+            handleThinking(data.content)
+            break
+          case 'chunk':
+            handleChunk(data.content)
+            break
+          case 'tool_call':
+            handleToolCall(data.tool_call_id, data.name, data.args)
+            break
+          case 'tool_result':
+            handleToolResult(data.tool_call_id, data.name, data.output)
+            break
+          case 'done':
+            handleDone(data.content)
+            break
+          case 'error':
+            addMessage('error', data.message || data.error || 'Unknown error')
+            break
+        }
+      } catch (e2) {
+        addMessage('assistant', e2.data)
       }
-    } catch (e2) {
-      addMessage('assistant', e2.data)
-    }
-  }
-
-  ws.onclose = () => { state.connected = false; resetStreaming(); pendingToolCalls.clear() }
-  ws.onerror = () => { state.connected = false; resetStreaming(); pendingToolCalls.clear() }
+    },
+    onClose: () => {
+      resetStreaming()
+      pendingToolCalls.clear()
+    },
+  })
 }
 
 export function disconnectOwnerWs() {
-  if (state.ws) { state.ws.onclose = null; state.ws.onerror = null; state.ws.close(); state.ws = null }
-  state.connected = false
+  network.disconnect()
   resetStreaming()
   pendingToolCalls.clear()
 }
 
 export function sendOwnerMessage(text, attachments) {
-  if (!state.connected || !state.ws) { addMessage('error', 'Not connected to backend.'); return }
+  if (network.getState() !== network.State.CONNECTED) { addMessage('error', 'Not connected to backend.'); return }
   const payload = {
     session_id: state.sessionId || '',
     user_id: state.phone,
@@ -363,12 +361,11 @@ export function sendOwnerMessage(text, attachments) {
   if (attachments && attachments.length > 0) {
     payload.attachments = attachments.map(a => ({ filename: a.filename, mime_type: a.mime_type, path: a.path }))
   }
-  state.ws.send(JSON.stringify(payload))
+  network.send(JSON.stringify(payload))
 }
 
 export function sendOwnerCancel() {
-  if (!state.connected || !state.ws) return
-  state.ws.send(JSON.stringify({ type: 'cancel', session_id: state.sessionId }))
+  network.sendCancel(state.sessionId)
 }
 
 export function setOnFinalize(fn) { onFinalize = fn }

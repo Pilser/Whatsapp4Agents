@@ -1,3 +1,4 @@
+import * as network from './network.js'
 import { els } from './dom.js'
 import * as dom from './dom.js'
 import * as auth from './auth.js'
@@ -129,7 +130,7 @@ function handleSubmit(e) {
   streaming.finalizeIfActive()
   const text = els.input.value.trim()
   if (!text) return
-  if (!connection.state.connected) { addMessage('error', 'Not connected to backend.'); return }
+  if (network.getState() !== network.State.CONNECTED) { addMessage('error', 'Not connected to backend.'); return }
   showStopIcon()
   addMessage('user', text)
   connection.send(text)

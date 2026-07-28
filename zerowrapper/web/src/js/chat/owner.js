@@ -1,3 +1,4 @@
+import * as network from './network.js'
 import * as connection from './connection.js'
 import { uploadFile, createAttachmentChip, uploadState } from './file-upload.js'
 import * as ownerChat from './owner-chat.js'
@@ -63,7 +64,7 @@ function setupOwnerForm() {
 
   form._ownerHandler = (e) => {
     e.preventDefault()
-    if (!ownerChat.state.connected) { ownerChat.addMessage('error', 'Not connected.'); return }
+    if (network.getState() !== network.State.CONNECTED) { ownerChat.addMessage('error', 'Not connected.'); return }
     ownerChat.finalizeStreaming()
     const text = input.value.trim()
     const attachments = [...uploadState.pending]

@@ -72,7 +72,7 @@ async fn handle_ws_connection(
     ctx: Arc<ChannelContext>,
     agent_alias: &str,
 ) -> anyhow::Result<()> {
-    let (mut ws_sender, mut ws_receiver) = ws.split();
+    let (ws_sender, mut ws_receiver) = ws.split();
     let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
     let agent_alias = agent_alias.to_string();
 
@@ -168,7 +168,9 @@ async fn handle_ws_connection(
             while let Some(event) = event_rx.recv().await {
                 if let Ok(json) = serde_json::to_string(&event) {
                     let mut ws = ws.lock().await;
-                    let _ = ws.send(Message::Text(json.into())).await;
+                    if ws.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
                 }
             }
         });
