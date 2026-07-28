@@ -80,6 +80,10 @@ impl ZeroClawBridge {
                 let result = conn.get_session_messages(&session_id, limit).await;
                 let _ = reply_tx.send(result);
             }
+            ZeroClawCommand::Cancel { session_id, reply_tx } => {
+                let result = conn.cancel_session(&session_id).await;
+                let _ = reply_tx.send(result);
+            }
         }
         Ok(())
     }
@@ -174,6 +178,11 @@ impl ZeroClawBridge {
         }
         let structured_prompt = self.format_prompt(user_id, channel, role, attachments, prompt).await;
         conn.prompt_stream(&actual_session_id, &structured_prompt, &event_tx).await
+    }
+
+    pub async fn cancel_session(&self, session_id: &str) -> anyhow::Result<bool> {
+        let mut conn = self.connect().await?;
+        conn.cancel_session(session_id).await
     }
 
     pub async fn get_session_messages(
@@ -360,6 +369,14 @@ impl ZeroClawConnection {
                 }
             }
         }
+    }
+
+    async fn cancel_session(&mut self, session_id: &str) -> anyhow::Result<bool> {
+        let params = serde_json::json!({
+            "session_id": session_id,
+        });
+        let result = self.send_request("session/cancel", params).await?;
+        Ok(result.get("cancelled").and_then(|v| v.as_bool()).unwrap_or(false))
     }
 
     async fn get_session_messages(&mut self, session_id: &str, limit: Option<usize>) -> anyhow::Result<SessionMessagesResult> {

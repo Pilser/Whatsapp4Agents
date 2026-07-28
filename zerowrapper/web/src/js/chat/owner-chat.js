@@ -212,6 +212,7 @@ function handleDone(content) {
   }
   finalizeStreaming()
   if (onFinalize) { onFinalize(); onFinalize = null }
+  document.dispatchEvent(new CustomEvent('owner-stream-done'))
 }
 
 function handleToolCall(id, name, args) {
@@ -367,7 +368,7 @@ export function sendOwnerMessage(text, attachments) {
 
 export function sendOwnerCancel() {
   if (!state.connected || !state.ws) return
-  state.ws.send(JSON.stringify({ type: 'cancel' }))
+  state.ws.send(JSON.stringify({ type: 'cancel', session_id: state.sessionId }))
 }
 
 export function setOnFinalize(fn) { onFinalize = fn }

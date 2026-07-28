@@ -134,6 +134,17 @@ impl ZeroClawHandle {
             .await
             .map_err(|e| anyhow::anyhow!("zeroclaw reply cancelled: {}", e))?
     }
+
+    pub async fn cancel_session(&self, session_id: String) -> anyhow::Result<bool> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(ZeroClawCommand::Cancel { session_id, reply_tx })
+            .await
+            .map_err(|e| anyhow::anyhow!("zeroclaw bridge disconnected: {}", e))?;
+        reply_rx
+            .await
+            .map_err(|e| anyhow::anyhow!("zeroclaw reply cancelled: {}", e))?
+    }
 }
 
 pub enum ZeroClawCommand {
@@ -157,5 +168,9 @@ pub enum ZeroClawCommand {
         session_id: String,
         limit: Option<usize>,
         reply_tx: oneshot::Sender<anyhow::Result<crate::types::SessionMessagesResult>>,
+    },
+    Cancel {
+        session_id: String,
+        reply_tx: oneshot::Sender<anyhow::Result<bool>>,
     },
 }

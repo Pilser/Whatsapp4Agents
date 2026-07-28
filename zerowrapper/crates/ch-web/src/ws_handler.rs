@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use futures_util::{pin_mut, SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt};
 use hyper::upgrade::Upgraded;
 use hyper::{Body, Request, Response, StatusCode};
 use tokio::sync::mpsc;
@@ -73,101 +73,109 @@ async fn handle_ws_connection(
     agent_alias: &str,
 ) -> anyhow::Result<()> {
     let (mut ws_sender, mut ws_receiver) = ws.split();
+    let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
     let agent_alias = agent_alias.to_string();
 
+    let mut current_session_id = String::new();
+
     while let Some(msg) = ws_receiver.next().await {
-        match msg {
-            Ok(Message::Text(text)) => {
-                let parsed: serde_json::Value = match serde_json::from_str(&text) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        let err = serde_json::json!({"type": "error", "error": format!("Invalid JSON: {}", e)});
-                        let _ = ws_sender.send(Message::Text(err.to_string())).await;
-                        continue;
-                    }
-                };
-
-                let session_id = parsed.get("session_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let user_id = parsed.get("user_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("anonymous");
-                let content = parsed.get("content")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let role = parsed.get("role")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("public");
-
-                let attachments = parsed.get("attachments")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter().filter_map(|a| {
-                            let filename = a.get("filename").and_then(|v| v.as_str()).unwrap_or("file");
-                            let mime_type = a.get("mime_type").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");
-                            let path = a.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                            let data = a.get("data").and_then(|v| v.as_str()).unwrap_or("");
-                            Some(zw_core::Attachment {
-                                filename: filename.to_string(),
-                                mime_type: mime_type.to_string(),
-                                data: data.as_bytes().to_vec(),
-                                path: path.to_string(),
-                            })
-                        }).collect()
-                    })
-                    .unwrap_or_default();
-
-                let msg = ChannelMessage {
-                    channel: "web".to_string(),
-                    session_id: session_id.to_string(),
-                    user_id: user_id.to_string(),
-                    content: content.to_string(),
-                    agent_alias: agent_alias.clone(),
-                    role: role.to_string(),
-                    attachments,
-                };
-
-                // Create event channel for streaming
-                let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
-
-                // Use select! to interleave event forwarding with route completion
-                let route_fut = ctx.registry.route_incoming_stream(msg, event_tx);
-                pin_mut!(route_fut);
-
-                let route_result = loop {
-                    tokio::select! {
-                        result = &mut route_fut => break result,
-                        Some(event) = event_rx.recv() => {
-                            if let Ok(json) = serde_json::to_string(&event) {
-                                let _ = ws_sender.send(Message::Text(json.into())).await;
-                            }
-                        }
-                        else => break Err(anyhow::anyhow!("event channel closed")),
-                    }
-                };
-
-                match route_result {
-                    Ok(_) => {}
-                    Err(e) => {
-                        let err = serde_json::json!({
-                            "type": "error",
-                            "error": format!("Route error: {}", e)
-                        });
-                        let _ = ws_sender.send(Message::Text(err.to_string())).await;
-                    }
-                }
-            }
+        let text = match msg {
+            Ok(Message::Text(t)) => t,
             Ok(Message::Close(_)) => break,
             Ok(Message::Ping(data)) => {
-                let _ = ws_sender.send(Message::Pong(data)).await;
+                let mut ws = ws_sender.lock().await;
+                let _ = ws.send(Message::Pong(data)).await;
+                continue;
             }
             Err(e) => {
                 tracing::warn!("WebSocket error: {}", e);
                 break;
             }
-            _ => {}
+            _ => continue,
+        };
+
+        let parsed: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                let mut ws = ws_sender.lock().await;
+                let err = serde_json::json!({"type": "error", "error": format!("Invalid JSON: {}", e)});
+                let _ = ws.send(Message::Text(err.to_string())).await;
+                continue;
+            }
+        };
+
+        if parsed.get("type").and_then(|v| v.as_str()) == Some("cancel") {
+            let sid = parsed.get("session_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| {
+                    if current_session_id.is_empty() { None } else { Some(current_session_id.as_str()) }
+                });
+            if let Some(sid) = sid {
+                let _ = ctx.zeroclaw.cancel_session(sid.to_string()).await;
+            }
+            continue;
         }
+
+        let session_id_val = parsed.get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let user_id = parsed.get("user_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("anonymous");
+        let content = parsed.get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let role = parsed.get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("public");
+
+        let attachments = parsed.get("attachments")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().filter_map(|a| {
+                    let filename = a.get("filename").and_then(|v| v.as_str()).unwrap_or("file");
+                    let mime_type = a.get("mime_type").and_then(|v| v.as_str()).unwrap_or("application/octet-stream");
+                    let path = a.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let data = a.get("data").and_then(|v| v.as_str()).unwrap_or("");
+                    Some(zw_core::Attachment {
+                        filename: filename.to_string(),
+                        mime_type: mime_type.to_string(),
+                        data: data.as_bytes().to_vec(),
+                        path: path.to_string(),
+                    })
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        let msg = ChannelMessage {
+            channel: "web".to_string(),
+            session_id: session_id_val.clone(),
+            user_id: user_id.to_string(),
+            content: content.to_string(),
+            agent_alias: agent_alias.clone(),
+            role: role.to_string(),
+            attachments,
+        };
+
+        current_session_id = session_id_val;
+        let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
+        let ws = ws_sender.clone();
+        let registry = ctx.registry.clone();
+
+        tokio::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                if let Ok(json) = serde_json::to_string(&event) {
+                    let mut ws = ws.lock().await;
+                    let _ = ws.send(Message::Text(json.into())).await;
+                }
+            }
+        });
+
+        tokio::spawn(async move {
+            let _ = registry.route_incoming_stream(msg, event_tx).await;
+        });
     }
 
     Ok(())

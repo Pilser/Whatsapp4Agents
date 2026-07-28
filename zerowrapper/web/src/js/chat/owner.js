@@ -48,6 +48,8 @@ export function init() {
   if (state.phone && state.role) {
     showOwnerChat()
   }
+
+  document.addEventListener('owner-stream-done', showOwnerSendIcon)
 }
 
 function setupOwnerForm() {
@@ -65,7 +67,7 @@ function setupOwnerForm() {
     ownerChat.finalizeStreaming()
     const text = input.value.trim()
     const attachments = [...uploadState.pending]
-    if (!text && attachments.length === 0) return
+    if (!text && attachments.length === 0) { ownerChat.addMessage('error', 'Cannot send an empty message.'); return }
     showOwnerStopIcon()
     const combined = text && attachments.length > 0
       ? JSON.stringify({ message: text, attachments: attachments.map(a => ({ filename: a.filename, mime_type: a.mime_type, path: a.path })) })
