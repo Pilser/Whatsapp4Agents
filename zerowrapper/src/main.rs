@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -65,8 +64,26 @@ async fn main() -> anyhow::Result<()> {
     let mut channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
 
     channels.register(Box::new(
-        ch_web::WebChannel::new(&config.ch_web.bind, &config.ch_web.agent, cache, config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
+        ch_web::WebChannel::new(&config.ch_web.bind, &config.ch_web.agent, cache.clone(), config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
     ));
+
+    let registry_handle = channels.registry_handle();
+    let zeroclaw_handle = Arc::new(channels.zeroclaw_handle());
+
+    let ui_ctx = ch_web_ui::context::AppContext::new(
+        registry_handle,
+        zeroclaw_handle,
+        db.clone(),
+        cache.clone(),
+        &config.ch_web.agent,
+        config.ch_web.upload_dir.clone(),
+    );
+    let ui_bind = config.ch_web.ui_bind();
+    let ui_handle = tokio::spawn(async move {
+        if let Err(e) = ch_web_ui::app::start_on(ui_bind, ui_ctx).await {
+            tracing::error!("ch-web-ui exited: {}", e);
+        }
+    });
 
     let zc_handle = tokio::spawn(async move {
         if let Err(e) = zeroclaw.run().await {
@@ -85,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
 
     let _ = zc_handle.await;
     let _ = ch_handle.await;
+    let _ = ui_handle.await;
 
     Ok(())
 }

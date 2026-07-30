@@ -31,12 +31,29 @@ pub struct WebChannelConfig {
     /// Path to built frontend dist folder (optional)
     #[serde(default)]
     pub dist_path: Option<PathBuf>,
+    /// Topcoat UI bind address, e.g. "0.0.0.0:9091". Defaults to bind port + 1.
+    #[serde(default)]
+    pub ui_bind: Option<String>,
     /// Pre-configured admin/owner accounts: phone -> {role, password}
     #[serde(default)]
     pub accounts: HashMap<String, AccountConfig>,
     /// Directory for file uploads
     #[serde(default = "default_upload_dir")]
     pub upload_dir: PathBuf,
+}
+
+impl WebChannelConfig {
+    pub fn ui_bind(&self) -> String {
+        if let Some(ref b) = self.ui_bind {
+            return b.clone();
+        }
+        if let Some((host, port)) = self.bind.rsplit_once(':') {
+            let port: u16 = port.parse().unwrap_or(9090);
+            format!("{}:{}", host, port + 1)
+        } else {
+            "127.0.0.1:9091".to_string()
+        }
+    }
 }
 
 fn default_upload_dir() -> PathBuf {
@@ -80,6 +97,7 @@ impl Default for WrapperConfig {
                 bind: String::new(),
                 allowed_origins: vec![],
                 dist_path: None,
+                ui_bind: None,
                 accounts: HashMap::new(),
                 upload_dir: default_upload_dir(),
             },
@@ -188,6 +206,7 @@ impl WrapperConfig {
                         match (wk.as_str(), wv) {
                             ("agent", toml::Value::String(v)) => base.ch_web.agent = v.clone(),
                             ("bind", toml::Value::String(v)) => base.ch_web.bind = v.clone(),
+                            ("ui_bind", toml::Value::String(v)) => base.ch_web.ui_bind = Some(v.clone()),
                             ("allowed_origins", toml::Value::Array(arr)) => {
                                 let origins: Vec<String> = arr.iter()
                                     .filter_map(|v| v.as_str().map(String::from))

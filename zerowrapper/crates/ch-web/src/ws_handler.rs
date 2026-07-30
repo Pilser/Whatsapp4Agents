@@ -1,52 +1,45 @@
 use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
+use hyper::body::Incoming;
 use hyper::upgrade::Upgraded;
-use hyper::{Body, Request, Response, StatusCode};
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use http_body_util::Full;
+use bytes::Bytes;
 use tokio::sync::mpsc;
-use tokio_tungstenite::WebSocketStream;
-use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 use zw_core::{ChannelContext, ChannelMessage, StreamEvent};
 
 pub async fn handle_ws_upgrade(
-    req: Request<Body>,
+    req: Request<Incoming>,
     ctx: Arc<ChannelContext>,
     agent_alias: &str,
-) -> anyhow::Result<Response<Body>> {
+) -> anyhow::Result<Response<Full<Bytes>>> {
     if !is_ws_upgrade(&req) {
         return Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
-            .body(Body::from("Expected WebSocket upgrade"))
+            .body(Full::new(Bytes::from("Expected WebSocket upgrade")))
             .unwrap());
     }
 
-    let key = req.headers()
-        .get("sec-websocket-key")
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| anyhow::anyhow!("Missing Sec-WebSocket-Key header"))?
-        .to_string();
-
-    let accept_key = derive_accept_key(key.as_bytes());
-
-    let upgraded = hyper::upgrade::on(req);
-    let ctx = ctx.clone();
     let agent_alias = agent_alias.to_string();
+    let ctx = ctx.clone();
+
+    let mut req = req;
+    let upgraded = hyper::upgrade::on(&mut req).await?;
 
     tokio::spawn(async move {
-        match upgraded.await {
-            Ok(upgraded) => {
-                let ws = WebSocketStream::from_raw_socket(
-                    upgraded,
-                    tokio_tungstenite::tungstenite::protocol::Role::Server,
-                    None,
-                ).await;
-                if let Err(e) = handle_ws_connection(ws, ctx, &agent_alias).await {
-                    tracing::warn!("WebSocket connection error: {}", e);
-                }
-            }
+        let ws = match accept_async(TokioIo::new(upgraded)).await {
+            Ok(ws) => ws,
             Err(e) => {
-                tracing::warn!("Hyper upgrade error: {}", e);
+                tracing::warn!("WebSocket accept error: {}", e);
+                return;
             }
+        };
+        if let Err(e) = handle_ws_connection(ws, ctx, &agent_alias).await {
+            tracing::warn!("WebSocket connection error: {}", e);
         }
     });
 
@@ -54,12 +47,11 @@ pub async fn handle_ws_upgrade(
         .status(StatusCode::SWITCHING_PROTOCOLS)
         .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Accept", &accept_key)
-        .body(Body::empty())
+        .body(Full::new(Bytes::new()))
         .unwrap())
 }
 
-fn is_ws_upgrade(req: &Request<Body>) -> bool {
+fn is_ws_upgrade(req: &Request<Incoming>) -> bool {
     req.headers()
         .get("upgrade")
         .and_then(|v| v.to_str().ok())
@@ -68,7 +60,7 @@ fn is_ws_upgrade(req: &Request<Body>) -> bool {
 }
 
 async fn handle_ws_connection(
-    ws: WebSocketStream<Upgraded>,
+    ws: WebSocketStream<TokioIo<Upgraded>>,
     ctx: Arc<ChannelContext>,
     agent_alias: &str,
 ) -> anyhow::Result<()> {
@@ -99,7 +91,7 @@ async fn handle_ws_connection(
             Err(e) => {
                 let mut ws = ws_sender.lock().await;
                 let err = serde_json::json!({"type": "error", "error": format!("Invalid JSON: {}", e)});
-                let _ = ws.send(Message::Text(err.to_string())).await;
+                let _ = ws.send(Message::Text(err.to_string().into())).await;
                 continue;
             }
         };

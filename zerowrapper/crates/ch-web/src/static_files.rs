@@ -1,7 +1,9 @@
 use std::path::Path;
-use hyper::{Body, Response, StatusCode};
+use hyper::{Response, StatusCode};
+use http_body_util::Full;
+use bytes::Bytes;
 
-pub fn handle_static_request(dist_path: &Path, request_path: &str) -> Result<Response<Body>, ()> {
+pub fn handle_static_request(dist_path: &Path, request_path: &str) -> Result<Response<Full<Bytes>>, ()> {
     let path = request_path.trim_start_matches('/');
     let file_path = if path.is_empty() || path == "/" {
         dist_path.join("index.html")
@@ -25,7 +27,7 @@ pub fn handle_static_request(dist_path: &Path, request_path: &str) -> Result<Res
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", mime)
-                .body(Body::from(data))
+                .body(Full::new(Bytes::from(data)))
                 .unwrap())
         }
         Err(_) => Err(()),

@@ -8,8 +8,12 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use async_trait::async_trait;
-use hyper::service::{make_service_fn, service_fn};
-use hyper::{Body, Request, Response, Server, StatusCode};
+use hyper::body::Incoming;
+use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder;
+use http_body_util::{Full, BodyExt};
+use bytes::Bytes;
 use serde_json::json;
 use zw_cache::CacheManager;
 use zw_core::{Channel, ChannelContext};
@@ -57,35 +61,39 @@ impl Channel for WebChannel {
 
         tracing::info!("Web channel starting on {}, agent={}", self.bind, agent);
 
-        let make_svc = make_service_fn(move |_| {
+        let listener = tokio::net::TcpListener::bind(&addr).await?;
+        let builder = Builder::new(TokioExecutor::new());
+
+        loop {
+            let (stream, _) = listener.accept().await?;
             let ctx = ctx.clone();
             let cache = cache.clone();
             let dist_path = dist_path.clone();
             let upload_dir = upload_dir.clone();
             let agent = agent.clone();
             let db = db.clone();
-            async move {
-                Ok::<_, Infallible>(service_fn(move |req| {
+            let builder = builder.clone();
+            tokio::spawn(async move {
+                let io = TokioIo::new(stream);
+                if let Err(e) = builder.serve_connection(io, hyper::service::service_fn(move |req: Request<Incoming>| {
                     handle_request(req, ctx.clone(), cache.clone(), dist_path.clone(), upload_dir.clone(), agent.clone(), db.clone())
-                }))
-            }
-        });
-
-        let server = Server::bind(&addr).serve(make_svc);
-        server.await?;
-        Ok(())
+                })).await {
+                    tracing::warn!("Connection error: {}", e);
+                }
+            });
+        }
     }
 }
 
 async fn handle_request(
-    req: Request<Body>,
+    req: Request<Incoming>,
     ctx: Arc<ChannelContext>,
     cache: Arc<CacheManager>,
     dist_path: Option<PathBuf>,
     upload_dir: PathBuf,
     agent: String,
     db: DbPool,
-) -> Result<Response<Body>, Infallible> {
+) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = req.uri().path().to_string();
 
     if path == "/health" {
@@ -103,7 +111,7 @@ async fn handle_request(
                 tracing::warn!("WebSocket upgrade failed: {}", e);
                 return Ok(Response::builder()
                     .status(StatusCode::BAD_REQUEST)
-                    .body(Body::from(format!("WebSocket upgrade failed: {}", e)))
+                    .body(Full::new(Bytes::from(format!("WebSocket upgrade failed: {}", e))))
                     .unwrap());
             }
         }
@@ -137,11 +145,11 @@ async fn handle_request(
 
     Ok(Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(Body::from("Not found"))
+        .body(Full::new(Bytes::from("Not found")))
         .unwrap())
 }
 
-async fn handle_history(req: Request<Body>, ctx: Arc<ChannelContext>, agent: &str) -> Response<Body> {
+async fn handle_history(req: Request<Incoming>, ctx: Arc<ChannelContext>, agent: &str) -> Response<Full<Bytes>> {
     let query = req.uri().query().unwrap_or("");
     let params: std::collections::HashMap<&str, &str> = query.split('&')
         .filter_map(|pair| {
@@ -168,7 +176,7 @@ async fn handle_history(req: Request<Body>, ctx: Arc<ChannelContext>, agent: &st
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": "Missing user_id"}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": "Missing user_id"}).to_string())))
             .unwrap();
     }
 
@@ -178,7 +186,7 @@ async fn handle_history(req: Request<Body>, ctx: Arc<ChannelContext>, agent: &st
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_string(&result).unwrap_or_default()))
+                .body(Full::new(Bytes::from(serde_json::to_string(&result).unwrap_or_default())))
                 .unwrap()
         }
         Err(e) => {
@@ -186,25 +194,25 @@ async fn handle_history(req: Request<Body>, ctx: Arc<ChannelContext>, agent: &st
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({
+                .body(Full::new(Bytes::from(json!({
                     "session_id": session_id,
                     "messages": [],
                     "total": 0,
                     "start": 0
-                }).to_string()))
+                }).to_string())))
                 .unwrap()
         }
     }
 }
 
-async fn handle_register(req: Request<Body>, db: DbPool) -> Response<Body> {
-    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
-        Ok(b) => b,
+async fn handle_register(req: Request<Incoming>, db: DbPool) -> Response<Full<Bytes>> {
+    let body_bytes = match req.into_body().collect().await {
+        Ok(collected) => collected.to_bytes(),
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Failed to read body: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Failed to read body: {}", e)}).to_string())))
                 .unwrap();
         }
     };
@@ -215,7 +223,7 @@ async fn handle_register(req: Request<Body>, db: DbPool) -> Response<Body> {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Invalid JSON: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Invalid JSON: {}", e)}).to_string())))
                 .unwrap();
         }
     };
@@ -225,7 +233,7 @@ async fn handle_register(req: Request<Body>, db: DbPool) -> Response<Body> {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": "Missing phone"}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": "Missing phone"}).to_string())))
             .unwrap();
     }
 
@@ -237,7 +245,7 @@ async fn handle_register(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"ok": true, "phone": phone, "name": display_name}).to_string()))
+                .body(Full::new(Bytes::from(json!({"ok": true, "phone": phone, "name": display_name}).to_string())))
                 .unwrap()
         }
         Err(e) => {
@@ -245,13 +253,13 @@ async fn handle_register(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Database error: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Database error: {}", e)}).to_string())))
                 .unwrap()
         }
     }
 }
 
-async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
+async fn handle_login(req: Request<Incoming>, db: DbPool) -> Response<Full<Bytes>> {
     let phone = req.uri().query()
         .and_then(|q| {
             for pair in q.split('&') {
@@ -268,7 +276,7 @@ async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": "Missing phone"}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": "Missing phone"}).to_string())))
             .unwrap();
     }
 
@@ -278,19 +286,19 @@ async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({
+                .body(Full::new(Bytes::from(json!({
                     "exists": true,
                     "phone": user.id,
                     "name": display_name,
                     "role": user.role
-                }).to_string()))
+                }).to_string())))
                 .unwrap()
         }
         Ok(None) => {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"exists": false, "phone": phone}).to_string()))
+                .body(Full::new(Bytes::from(json!({"exists": false, "phone": phone}).to_string())))
                 .unwrap()
         }
         Err(e) => {
@@ -298,20 +306,20 @@ async fn handle_login(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Database error: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Database error: {}", e)}).to_string())))
                 .unwrap()
         }
     }
 }
 
-async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
-    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
-        Ok(b) => b,
+async fn handle_admin_login(req: Request<Incoming>, db: DbPool) -> Response<Full<Bytes>> {
+    let body_bytes = match req.into_body().collect().await {
+        Ok(collected) => collected.to_bytes(),
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Failed to read body: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Failed to read body: {}", e)}).to_string())))
                 .unwrap();
         }
     };
@@ -322,7 +330,7 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Invalid JSON: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Invalid JSON: {}", e)}).to_string())))
                 .unwrap();
         }
     };
@@ -334,7 +342,7 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": "Missing phone or password"}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": "Missing phone or password"}).to_string())))
             .unwrap();
     }
 
@@ -346,19 +354,19 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
                     Response::builder()
                         .status(StatusCode::OK)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(json!({
+                        .body(Full::new(Bytes::from(json!({
                             "ok": true,
                             "phone": user.id,
                             "name": display_name,
                             "role": user.role
-                        }).to_string()))
+                        }).to_string())))
                         .unwrap()
                 }
                 Ok(None) => {
                     Response::builder()
                         .status(StatusCode::UNAUTHORIZED)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": "User not found"}).to_string()))
+                        .body(Full::new(Bytes::from(json!({"error": "User not found"}).to_string())))
                         .unwrap()
                 }
                 Err(e) => {
@@ -366,7 +374,7 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
                     Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(json!({"error": "Database error"}).to_string()))
+                        .body(Full::new(Bytes::from(json!({"error": "Database error"}).to_string())))
                         .unwrap()
                 }
             }
@@ -375,7 +383,7 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": "Invalid credentials"}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": "Invalid credentials"}).to_string())))
                 .unwrap()
         }
         Err(e) => {
@@ -383,26 +391,26 @@ async fn handle_admin_login(req: Request<Body>, db: DbPool) -> Response<Body> {
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": "Database error"}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": "Database error"}).to_string())))
                 .unwrap()
         }
     }
 }
 
-async fn handle_upload(req: Request<Body>, upload_dir: PathBuf) -> Response<Body> {
+async fn handle_upload(req: Request<Incoming>, upload_dir: PathBuf) -> Response<Full<Bytes>> {
     let filename = req.headers()
         .get("X-Filename")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("upload")
         .to_string();
 
-    let body_bytes = match hyper::body::to_bytes(req.into_body()).await {
-        Ok(b) => b,
+    let body_bytes = match req.into_body().collect().await {
+        Ok(collected) => collected.to_bytes(),
         Err(e) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
-                .body(Body::from(json!({"error": format!("Failed to read body: {}", e)}).to_string()))
+                .body(Full::new(Bytes::from(json!({"error": format!("Failed to read body: {}", e)}).to_string())))
                 .unwrap();
         }
     };
@@ -411,7 +419,7 @@ async fn handle_upload(req: Request<Body>, upload_dir: PathBuf) -> Response<Body
         return Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": "Empty file"}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": "Empty file"}).to_string())))
             .unwrap();
     }
 
@@ -437,7 +445,7 @@ async fn handle_upload(req: Request<Body>, upload_dir: PathBuf) -> Response<Body
         return Response::builder()
             .status(StatusCode::INTERNAL_SERVER_ERROR)
             .header("Content-Type", "application/json")
-            .body(Body::from(json!({"error": format!("Failed to save file: {}", e)}).to_string()))
+            .body(Full::new(Bytes::from(json!({"error": format!("Failed to save file: {}", e)}).to_string())))
             .unwrap();
     }
 
@@ -447,12 +455,20 @@ async fn handle_upload(req: Request<Body>, upload_dir: PathBuf) -> Response<Body
     Response::builder()
         .status(StatusCode::OK)
         .header("Content-Type", "application/json")
-        .body(Body::from(json!({
+        .body(Full::new(Bytes::from(json!({
             "filename": safe_name,
             "path": abs_path.to_string_lossy().to_string(),
             "size": body_bytes.len(),
             "mime_type": mime_guess::from_path(&safe_name).first_or_octet_stream().to_string()
-        }).to_string()))
+        }).to_string())))
+        .unwrap()
+}
+
+fn json_response(body: &str, status: StatusCode) -> Response<Full<Bytes>> {
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(Full::new(Bytes::from(body.to_string())))
         .unwrap()
 }
 
