@@ -63,12 +63,59 @@ async fn main() -> anyhow::Result<()> {
     let zeroclaw = zw_channels::ZeroClawBridge::new(&config.zeroclaw_socket, db.clone());
     let mut channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
 
+    let primary_bind = config.ch_web.bind.clone();
+    let legacy_bind = config.ch_web.ui_bind();
+
     channels.register(Box::new(
-        ch_web::WebChannel::new(&config.ch_web.bind, &config.ch_web.agent, cache.clone(), config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
+        ch_web::WebChannel::new(&legacy_bind, &config.ch_web.agent, cache.clone(), config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
     ));
 
     let registry_handle = channels.registry_handle();
     let zeroclaw_handle = Arc::new(channels.zeroclaw_handle());
+
+    let landing_path = std::env::var("ZEROWRAPPER_LANDING_YAML")
+        .unwrap_or_else(|_| "./landing.yaml".to_string());
+    let settings_path = std::env::var("ZEROWRAPPER_SETTINGS_YAML")
+        .unwrap_or_else(|_| "./sitesettings.yaml".to_string());
+    let config_dir = std::env::var("TOPCOAT_ASSETS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("assets"));
+    let settings = ch_web_ui::config::load_site_settings(&settings_path)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to load {}: {e}", settings_path);
+            ch_web_ui::config::SiteSettings {
+                site: ch_web_ui::config::SiteInfo {
+                    title: "PilserLab".into(),
+                    url: "https://ai.pilserlabs.com".into(),
+                    local_url: None,
+                    tagline: "AI Aness Agents from Rust".into(),
+                    description: "PilserLab builds high-performance AI agents.".into(),
+                    favicon: None,
+                },
+                footer: ch_web_ui::config::FooterConfig {
+                    text: "© PilserLab — built with Rust".into(),
+                    links: vec![],
+                },
+            }
+        });
+    let landing = ch_web_ui::config::load_landing(&landing_path)
+        .unwrap_or_else(|e| {
+            tracing::warn!("Failed to load {}: {e}", landing_path);
+            ch_web_ui::config::LandingData {
+                hero: ch_web_ui::config::HeroSection {
+                    title: "PilserLab".into(),
+                    subtitle: Some("AI Aness Agents from Rust".into()),
+                    description: "We build high-performance AI agents.".into(),
+                    fallback: "Backend not connected.".into(),
+                },
+                examples: vec![],
+                faq: vec![],
+                about: ch_web_ui::config::AboutSection {
+                    heading: "Built with Rust".into(),
+                    text: String::new(),
+                },
+            }
+        });
 
     let ui_ctx = ch_web_ui::context::AppContext::new(
         registry_handle,
@@ -77,10 +124,12 @@ async fn main() -> anyhow::Result<()> {
         cache.clone(),
         &config.ch_web.agent,
         config.ch_web.upload_dir.clone(),
+        config_dir,
+        settings,
+        landing,
     );
-    let ui_bind = config.ch_web.ui_bind();
     let ui_handle = tokio::spawn(async move {
-        if let Err(e) = ch_web_ui::app::start_on(ui_bind, ui_ctx).await {
+        if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);
         }
     });

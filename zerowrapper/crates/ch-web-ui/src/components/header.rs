@@ -1,20 +1,117 @@
 use topcoat::Result;
-use topcoat::view::{view, component};
+use topcoat::view::{view, component, Unescaped};
+use topcoat::context::{Cx, app_context};
+
+use crate::context::AppContext;
 
 #[component]
-pub async fn site_header() -> Result {
+pub async fn site_header(cx: &Cx) -> Result {
+    let ctx: &AppContext = app_context(cx);
+    let site_url = &ctx.settings.site.url;
+
     view! {
-        <header class="border-b border-border">
-            <nav class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-                <a href="/" class="text-lg font-bold tracking-tight">"WAOS"</a>
-                <div class="flex items-center gap-4">
-                    <a href="/chat" class="text-sm text-muted-foreground hover:text-foreground transition-colors">"Chat"</a>
-                    <a
-                        href="/owner"
-                        class="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs font-medium shadow-xs transition-colors hover:bg-foreground/5"
-                    >"Owner"</a>
-                </div>
+        <header
+            class="sticky top-0 z-10 flex items-center justify-between"
+            style="height: 56px; padding: 0 1.5rem; background: var(--color-bg); border-bottom: 1px solid var(--color-border-weak);"
+        >
+            <a href="/" class="flex items-center gap-2 no-underline font-semibold" style="color: var(--color-text-strong);">
+                "PilserLab"
+                <span class="font-normal hidden sm:inline" style="color: var(--color-text-weak);">"/ AI Agents"</span>
+            </a>
+            <nav class="self-stretch hidden md:flex">
+                <ul class="flex items-stretch h-full list-none m-0 p-0">
+                    <li class="flex items-stretch">
+                        <a href="#chat" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak);">"Ask AI"</a>
+                    </li>
+                    <li class="flex items-stretch">
+                        <a href="#faq" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak);">"FAQ"</a>
+                    </li>
+                    <li class="flex items-stretch">
+                        <a href=(site_url) target="_blank" rel="noopener" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak); border-right: 1px solid var(--color-border-weak);">"pilserlabs.com"</a>
+                    </li>
+                    <li class="flex items-stretch">
+                        <button id="owner-btn" class="flex items-center no-underline px-5 text-sm transition cursor-pointer" style="color: var(--color-bg-interactive); border-left: 1px solid var(--color-border-weak); background: none; font-family: inherit;">"I Own"</button>
+                    </li>
+                </ul>
             </nav>
+            <div class="flex items-center gap-2">
+                <button
+                    id="theme-toggle"
+                    class="flex items-center justify-center cursor-pointer"
+                    style="padding: 8px; border: 1px solid var(--color-border-weak); border-radius: 6px; background: none; color: var(--color-text-weak);"
+                    aria-label="Toggle theme"
+                >
+                    <span id="theme-icon"></span>
+                </button>
+                <button
+                    id="nav-toggle"
+                    class="md:hidden flex items-center justify-center cursor-pointer"
+                    style="padding: 8px; border: 1px solid var(--color-border-weak); border-radius: 6px; background: none; color: var(--color-text-strong);"
+                    aria-label="Menu"
+                >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square">
+                        <path d="M4 6h16M4 12h16M4 18h16"></path>
+                    </svg>
+                </button>
+            </div>
         </header>
+        <nav
+            id="nav-mobile"
+            class="hidden fixed left-0 right-0 z-50"
+            style="top: 56px; background: var(--color-bg); border-bottom: 1px solid var(--color-border-weak);"
+        >
+            <ul class="list-none m-0 p-0">
+                <li><a href="#chat" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">"Ask AI"</a></li>
+                <li><a href="#faq" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">"FAQ"</a></li>
+                <li><a href=(site_url) target="_blank" rel="noopener" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak);">"pilserlabs.com"</a></li>
+                <li><button id="owner-btn-mobile" class="mobile-link block w-full text-left px-6 py-4 no-underline text-sm cursor-pointer" style="color: var(--color-bg-interactive); background: none; border: none; border-bottom: 1px solid var(--color-border-weak); font-family: inherit;">"I Own"</button></li>
+            </ul>
+        </nav>
+        <script>{ (Unescaped::new_unchecked(r#"(function(){
+            var sunSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+            var moonSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+            function updateThemeIcon() {
+                var theme = document.documentElement.getAttribute('data-theme');
+                var icon = document.getElementById('theme-icon');
+                if (icon) icon.innerHTML = theme === 'dark' ? sunSvg : moonSvg;
+            }
+            var themeToggle = document.getElementById('theme-toggle');
+            if (themeToggle) {
+                updateThemeIcon();
+                themeToggle.addEventListener('click', function() {
+                    var current = document.documentElement.getAttribute('data-theme');
+                    var next = current === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    localStorage.setItem('theme', next);
+                    updateThemeIcon();
+                });
+            }
+            var toggle = document.getElementById('nav-toggle');
+            var nav = document.getElementById('nav-mobile');
+            if (toggle && nav) {
+                toggle.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    if (nav.classList.contains('hidden')) {
+                        nav.classList.remove('hidden');
+                        nav.classList.add('block');
+                    } else {
+                        nav.classList.remove('block');
+                        nav.classList.add('hidden');
+                    }
+                });
+                nav.querySelectorAll('.mobile-link').forEach(function(link) {
+                    link.addEventListener('click', function() {
+                        nav.classList.remove('block');
+                        nav.classList.add('hidden');
+                    });
+                });
+                document.addEventListener('click', function(e) {
+                    if (!toggle.contains(e.target) && !nav.contains(e.target)) {
+                        nav.classList.remove('block');
+                        nav.classList.add('hidden');
+                    }
+                });
+            }
+        })();"#)) }</script>
     }
 }

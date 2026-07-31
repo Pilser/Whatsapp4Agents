@@ -1,15 +1,78 @@
-pub struct WebUiConfig {
-    pub bind: String,
-    pub agent: String,
-    pub upload_dir: std::path::PathBuf,
+use std::path::Path;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteSettings {
+    pub site: SiteInfo,
+    pub footer: FooterConfig,
 }
 
-impl Default for WebUiConfig {
-    fn default() -> Self {
-        Self {
-            bind: "127.0.0.1:3001".to_string(),
-            agent: "default".to_string(),
-            upload_dir: std::path::PathBuf::from("./uploads"),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteInfo {
+    pub title: String,
+    pub url: String,
+    pub local_url: Option<String>,
+    pub tagline: String,
+    pub description: String,
+    pub favicon: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FooterConfig {
+    pub text: String,
+    pub links: Vec<FooterLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FooterLink {
+    pub label: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LandingData {
+    pub hero: HeroSection,
+    pub examples: Vec<ExampleQuery>,
+    pub faq: Vec<FaqItem>,
+    pub about: AboutSection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeroSection {
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub description: String,
+    pub fallback: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExampleQuery {
+    pub query: String,
+    pub response: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaqItem {
+    pub q: String,
+    pub a: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AboutSection {
+    pub heading: String,
+    pub text: String,
+}
+
+pub fn load_site_settings(path: impl AsRef<Path>) -> Result<SiteSettings, String> {
+    let content = std::fs::read_to_string(path.as_ref())
+        .map_err(|e| format!("Failed to read {}: {e}", path.as_ref().display()))?;
+    serde_yaml::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.as_ref().display()))
+}
+
+pub fn load_landing(path: impl AsRef<Path>) -> Result<LandingData, String> {
+    let content = std::fs::read_to_string(path.as_ref())
+        .map_err(|e| format!("Failed to read {}: {e}", path.as_ref().display()))?;
+    serde_yaml::from_str(&content)
+        .map_err(|e| format!("Failed to parse {}: {e}", path.as_ref().display()))
 }

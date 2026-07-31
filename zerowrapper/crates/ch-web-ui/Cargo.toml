@@ -12,8 +12,9 @@ zw-core = { path = "../../zw-core" }
 zw-db = { path = "../../zw-db" }
 zw-cache = { path = "../../zw-cache" }
 async-trait = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
 futures-util = "0.3"
 tracing = { workspace = true }
 chrono = { workspace = true }
@@ -25,7 +26,6 @@ topcoat = { path = "../../../topcoat/crates/topcoat", default-features = false, 
     "tailwind",
     "font-fontsource",
     "icon-iconify",
-    "ui",
     "discover",
     "serve",
     "websocket",

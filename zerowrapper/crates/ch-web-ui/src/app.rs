@@ -1,14 +1,28 @@
 use std::str::FromStr;
+use std::path::Path;
 use tokio::net::TcpListener;
 use topcoat::router::{Router, RouterBuilderDiscoverExt};
 use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
 
 use crate::context::AppContext;
 
+fn load_assets() -> AssetBundle {
+    AssetBundle::load().unwrap_or_else(|_| {
+        let dir = std::env::var("TOPCOAT_ASSETS_DIR")
+            .unwrap_or_else(|_| "assets".to_string());
+        AssetBundle::load_dir(Path::new(&dir)).unwrap_or_else(|_| {
+            let tmp = std::env::temp_dir().join("zw-assets");
+            let _ = std::fs::create_dir_all(&tmp);
+            let _ = std::fs::write(tmp.join("manifest.toml"), b"version = 1\n");
+            AssetBundle::load_dir(&tmp).expect("failed to create temp asset bundle")
+        })
+    })
+}
+
 pub fn build_router(ctx: AppContext) -> Router {
     Router::builder()
         .app_context(ctx)
-        .assets(AssetBundle::load().unwrap())
+        .assets(load_assets())
         .discover()
         .build()
 }

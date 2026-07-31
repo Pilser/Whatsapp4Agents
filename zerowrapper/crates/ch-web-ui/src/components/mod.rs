@@ -1,23 +1,6 @@
 pub mod layout;
 pub mod header;
 pub mod footer;
-pub mod hero;
-pub mod faq;
-pub mod chat_app;
-pub mod chat_message;
 pub mod owner_login;
 pub mod owner_chat;
-pub mod typing_indicator;
-
-pub mod badge;
-pub mod button;
-pub mod card;
-pub mod checkbox;
-pub mod dropdown_menu;
-pub mod input;
-pub mod label;
-pub mod progress;
-pub mod select;
-pub mod spinner;
-pub mod switch;
-pub mod textarea;
+pub mod chat_section;

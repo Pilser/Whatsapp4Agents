@@ -2,11 +2,11 @@ use topcoat::Result;
 use topcoat::router::page;
 use topcoat::view::view;
 
-use crate::components::chat_app::chat_app;
+use crate::components::chat_section::chat_section;
 
 #[page("/chat")]
 pub async fn chat() -> Result {
     view! {
-        chat_app()
+        chat_section()
     }
 }
