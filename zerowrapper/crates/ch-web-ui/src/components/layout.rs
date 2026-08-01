@@ -7,6 +7,7 @@ use crate::context::AppContext;
 use crate::components::header::site_header;
 use crate::components::footer::site_footer;
 use crate::components::owner_chat::owner_chat;
+use crate::seo;
 use topcoat::asset::asset;
 
 #[layout("/")]
@@ -16,6 +17,18 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
     let desc = &ctx.settings.site.description;
     let url = &ctx.settings.site.url;
     let favicon = ctx.settings.site.favicon.as_deref().unwrap_or("/favicon.svg");
+    let brand = ctx.settings.site.brand_or_title();
+
+    let org_ld = seo::organization_jsonld(&ctx.settings.site);
+    let business_ld = ctx.settings.business.as_ref().map(|b| seo::business_jsonld(b, &ctx.settings.site));
+    let faq_ld = seo::faq_jsonld(&ctx.landing);
+    let mut schemas = vec![org_ld];
+    if let Some(b) = business_ld {
+        schemas.push(b);
+    }
+    if let Some(f) = faq_ld {
+        schemas.push(f);
+    }
 
     view! {
         <!DOCTYPE html>
@@ -25,10 +38,22 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <title>(title)</title>
                 <meta name="description" content=(desc)>
+                <link rel="canonical" href=(url)>
+                <meta property="og:type" content="website">
+                <meta property="og:site_name" content=(brand)>
                 <meta property="og:title" content=(title)>
                 <meta property="og:description" content=(desc)>
                 <meta property="og:url" content=(url)>
+                <meta property="og:image" content=(favicon)>
+                <meta property="og:locale" content="en_UG">
+                <meta name="twitter:card" content="summary">
+                <meta name="twitter:title" content=(title)>
+                <meta name="twitter:description" content=(desc)>
+                <meta name="twitter:image" content=(favicon)>
                 <link rel="icon" type="image/svg+xml" href=(favicon)>
+                for schema in &schemas {
+                    <script type="application/ld+json">(serde_json::to_string(schema).unwrap_or_default())</script>
+                }
                 <link rel="preconnect" href="https://fonts.googleapis.com">
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
                 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

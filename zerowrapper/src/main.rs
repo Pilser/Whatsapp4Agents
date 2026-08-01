@@ -97,6 +97,7 @@ async fn main() -> anyhow::Result<()> {
                     text: "© PilserLab — built with Rust".into(),
                     links: vec![],
                 },
+                business: None,
             }
         });
     let landing = ch_web_ui::config::load_landing(&landing_path)

@@ -22,6 +22,74 @@ pub async fn robots(cx: &Cx) -> Result<Response> {
     static_file(cx, "robots.txt", "text/plain").await
 }
 
+#[route(GET "/sitemap-index.xml")]
+pub async fn sitemap_index(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let url = &ctx.settings.site.url;
+    let body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap>
+    <loc>{}/sitemap.xml</loc>
+  </sitemap>
+</sitemapindex>
+"#,
+        url
+    );
+    xml_response(body)
+}
+
+#[route(GET "/sitemap.xml")]
+pub async fn sitemap(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let url = &ctx.settings.site.url;
+    let mut entries = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>{url}/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>{url}/chat</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+"#
+    );
+    for branch in ctx
+        .settings
+        .business
+        .as_ref()
+        .map(|b| &b.branches)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(burl) = &branch.url {
+            entries.push_str(&format!(
+                r#"  <url>
+    <loc>{burl}/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.9</priority>
+  </url>
+"#
+            ));
+        }
+    }
+    entries.push_str("</urlset>\n");
+    xml_response(entries)
+}
+
+fn xml_response(body: String) -> Result<Response> {
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/xml; charset=utf-8")
+        .header("cache-control", "public, max-age=3600")
+        .body(Body::from(body))
+        .unwrap())
+}
+
 async fn static_file(cx: &Cx, name: &str, mime: &str) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let path = ctx.config_dir.join(name);

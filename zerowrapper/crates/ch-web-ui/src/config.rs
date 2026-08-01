@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct SiteSettings {
     pub site: SiteInfo,
     pub footer: FooterConfig,
+    #[serde(default)]
+    pub business: Option<Business>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +48,38 @@ pub struct FooterConfig {
 pub struct FooterLink {
     pub label: String,
     pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Business {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(default)]
+    pub telephone: Option<String>,
+    #[serde(default)]
+    pub branches: Vec<BusinessBranch>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusinessBranch {
+    pub name: String,
+    pub address: String,
+    #[serde(default)]
+    pub telephone: Option<String>,
+    #[serde(default)]
+    pub hours: Option<String>,
+    #[serde(default)]
+    pub latitude: Option<f64>,
+    #[serde(default)]
+    pub longitude: Option<f64>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

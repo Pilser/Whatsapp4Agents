@@ -6,3 +6,4 @@ pub mod api;
 pub mod components;
 pub mod ws;
 pub mod assets;
+pub mod seo;
