@@ -30,6 +30,19 @@ fn branch_jsonld(branch: &crate::config::BusinessBranch) -> serde_json::Value {
     node
 }
 
+fn absolute_url(site: &SiteInfo, path: &str) -> String {
+    if path.starts_with("http://") || path.starts_with("https://") {
+        return path.to_string();
+    }
+    let base = site.url.trim_end_matches('/');
+    let suffix = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
+    format!("{base}{suffix}")
+}
+
 pub fn organization_jsonld(site: &SiteInfo) -> serde_json::Value {
     json!({
         "@context": "https://schema.org",
@@ -37,7 +50,7 @@ pub fn organization_jsonld(site: &SiteInfo) -> serde_json::Value {
         "name": site.brand_or_title(),
         "url": site.url,
         "description": site.description,
-        "logo": site.favicon,
+        "logo": site.favicon.as_deref().map(|f| absolute_url(site, f)),
     })
 }
 
@@ -58,7 +71,7 @@ pub fn business_jsonld(business: &Business, site: &SiteInfo) -> serde_json::Valu
         "name": business.name.as_deref().unwrap_or_else(|| site.brand_or_title()),
         "url": site.url,
         "description": business.description.as_deref().unwrap_or(&site.description),
-        "image": business.image,
+        "image": business.image.as_deref().map(|i| absolute_url(site, i)),
         "telephone": business.telephone,
         "branch": branches,
     });

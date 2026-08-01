@@ -52,7 +52,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <meta name="twitter:image" content=(favicon)>
                 <link rel="icon" type="image/svg+xml" href=(favicon)>
                 for schema in &schemas {
-                    <script type="application/ld+json">(serde_json::to_string(schema).unwrap_or_default())</script>
+                    <script type="application/ld+json">{ (Unescaped::new_unchecked(serde_json::to_string(schema).unwrap_or_default())) }</script>
                 }
                 <link rel="preconnect" href="https://fonts.googleapis.com">
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
