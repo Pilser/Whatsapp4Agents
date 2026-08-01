@@ -8,15 +8,17 @@ use crate::context::AppContext;
 pub async fn site_header(cx: &Cx) -> Result {
     let ctx: &AppContext = app_context(cx);
     let site_url = &ctx.settings.site.url;
-
+    let brand = ctx.settings.site.brand_or_title();
+    let tagline = &ctx.settings.site.tagline;
+    let host = ctx.settings.site.host();
     view! {
         <header
             class="sticky top-0 z-10 flex items-center justify-between"
             style="height: 56px; padding: 0 1.5rem; background: var(--color-bg); border-bottom: 1px solid var(--color-border-weak);"
         >
             <a href="/" class="flex items-center gap-2 no-underline font-semibold" style="color: var(--color-text-strong);">
-                "PilserLab"
-                <span class="font-normal hidden sm:inline" style="color: var(--color-text-weak);">"/ AI Agents"</span>
+                (brand)
+                <span class="font-normal hidden sm:inline" style="color: var(--color-text-weak);">"/ "(tagline)</span>
             </a>
             <nav class="self-stretch hidden md:flex">
                 <ul class="flex items-stretch h-full list-none m-0 p-0">
@@ -27,7 +29,7 @@ pub async fn site_header(cx: &Cx) -> Result {
                         <a href="#faq" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak);">"FAQ"</a>
                     </li>
                     <li class="flex items-stretch">
-                        <a href=(site_url) target="_blank" rel="noopener" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak); border-right: 1px solid var(--color-border-weak);">"pilserlabs.com"</a>
+                        <a href=(site_url) target="_blank" rel="noopener" class="flex items-center no-underline px-5 text-sm transition" style="color: var(--color-text-weak); border-left: 1px solid var(--color-border-weak); border-right: 1px solid var(--color-border-weak);">(&host)</a>
                     </li>
                     <li class="flex items-stretch">
                         <button id="owner-btn" class="flex items-center no-underline px-5 text-sm transition cursor-pointer" style="color: var(--color-bg-interactive); border-left: 1px solid var(--color-border-weak); background: none; font-family: inherit;">"I Own"</button>
@@ -63,7 +65,7 @@ pub async fn site_header(cx: &Cx) -> Result {
             <ul class="list-none m-0 p-0">
                 <li><a href="#chat" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">"Ask AI"</a></li>
                 <li><a href="#faq" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak); border-bottom: 1px solid var(--color-border-weak);">"FAQ"</a></li>
-                <li><a href=(site_url) target="_blank" rel="noopener" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak);">"pilserlabs.com"</a></li>
+                <li><a href=(site_url) target="_blank" rel="noopener" class="mobile-link block px-6 py-4 no-underline text-sm" style="color: var(--color-text-weak);">(&host)</a></li>
                 <li><button id="owner-btn-mobile" class="mobile-link block w-full text-left px-6 py-4 no-underline text-sm cursor-pointer" style="color: var(--color-bg-interactive); background: none; border: none; border-bottom: 1px solid var(--color-border-weak); font-family: inherit;">"I Own"</button></li>
             </ul>
         </nav>

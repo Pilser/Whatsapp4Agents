@@ -86,6 +86,7 @@ async fn main() -> anyhow::Result<()> {
             ch_web_ui::config::SiteSettings {
                 site: ch_web_ui::config::SiteInfo {
                     title: "PilserLab".into(),
+                    brand: None,
                     url: "https://ai.pilserlabs.com".into(),
                     local_url: None,
                     tagline: "AI Aness Agents from Rust".into(),

@@ -8,11 +8,12 @@ use crate::components::owner_login::owner_login;
 #[component]
 pub async fn chat_section(cx: &Cx) -> Result {
     let ctx: &AppContext = app_context(cx);
+    let brand = ctx.settings.site.brand_or_title();
 
     view! {
         <section class="px-6 py-8 md:px-10 mb-2 md:mb-4" style="border-top: 1px solid var(--color-border-weak);">
             <h3 class="text-sm font-bold mb-2" style="color: var(--color-text-strong);">"Ask AI"</h3>
-            <p class="text-sm mb-4" style="color: var(--color-text);">"Ask anything about PilserLab or try one of the examples below."</p>
+            <p class="text-sm mb-4" style="color: var(--color-text);">"Ask anything about "(brand)" or try one of the examples below."</p>
             <div id="example-chips" class="flex flex-wrap gap-2 mb-6">
                 for ex in &ctx.landing.examples {
                     <button class="example-chip px-1.5 py-0.5 text-[10px] leading-none rounded-sm cursor-pointer transition" style="background: var(--color-bg-weak); color: var(--color-text-weak);" data-query=(&ex.query)>(&ex.query)</button>

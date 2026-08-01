@@ -10,11 +10,30 @@ pub struct SiteSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SiteInfo {
     pub title: String,
+    #[serde(default)]
+    pub brand: Option<String>,
     pub url: String,
     pub local_url: Option<String>,
     pub tagline: String,
     pub description: String,
     pub favicon: Option<String>,
+}
+
+impl SiteInfo {
+    pub fn brand_or_title(&self) -> &str {
+        self.brand.as_deref().unwrap_or(&self.title)
+    }
+
+    pub fn host(&self) -> String {
+        self.url
+            .strip_prefix("https://")
+            .or_else(|| self.url.strip_prefix("http://"))
+            .unwrap_or(&self.url)
+            .split('/')
+            .next()
+            .unwrap_or(&self.url)
+            .to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
