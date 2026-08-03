@@ -248,7 +248,7 @@ function handleToolResult(id, name, output) {
   if (details) {
     const summary = details.querySelector('summary')
     if (summary) {
-      summary.innerHTML = '<span class="tc-pill-status done">\u2713</span> <span style="opacity:0.6">\uD83D\uDD27</span> Tool Call'
+      summary.innerHTML = '<span class="tc-pill-status done">\u2713</span> + acting'
     }
     if (output) {
       const existingPre = details.querySelector('pre')
