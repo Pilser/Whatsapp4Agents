@@ -1013,7 +1013,7 @@ function handleToolCall2(id, name, args) {
   row.dataset.toolCallId = id;
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar";
-  avatar.textContent = "+ acting";
+  avatar.innerHTML = BOT_AVATAR;
   row.appendChild(avatar);
   const content2 = document.createElement("div");
   content2.className = "msg-content";
