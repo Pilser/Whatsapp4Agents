@@ -17,6 +17,12 @@ var listenerMap = new Map;
 function getState() {
   return state;
 }
+function on(event, fn) {
+  if (!listenerMap.has(event))
+    listenerMap.set(event, new Set);
+  listenerMap.get(event).add(fn);
+  return () => listenerMap.get(event)?.delete(fn);
+}
 function emit(event, data) {
   listenerMap.get(event)?.forEach((fn) => fn(data));
 }
@@ -108,6 +114,7 @@ function init() {
   els.input = document.getElementById("chat-input");
   els.messages = document.getElementById("chat-messages");
   els.hint = document.getElementById("fallback-hint");
+  els.hintText = document.getElementById("chat-hint-text");
   els.chatRefreshBtn = document.getElementById("chat-refresh-btn");
   els.typingEl = document.getElementById("typing-indicator");
   els.authSection = document.getElementById("auth-section");
@@ -524,6 +531,30 @@ function clearPending() {
 
 // connection.js
 var onStateChange = null;
+function setHint(state3) {
+  if (!els.hint)
+    return;
+  const fallback = els.hintText ? els.hintText.dataset.fallback || els.hintText.textContent : "";
+  switch (state3) {
+    case State.CONNECTING:
+      els.hint.style.display = "flex";
+      if (els.hintText)
+        els.hintText.textContent = "Connecting to backend…";
+      if (els.chatRefreshBtn)
+        els.chatRefreshBtn.classList.add("hidden");
+      break;
+    case State.CONNECTED:
+      els.hint.style.display = "none";
+      break;
+    default:
+      els.hint.style.display = "flex";
+      if (els.hintText)
+        els.hintText.textContent = fallback;
+      if (els.chatRefreshBtn)
+        els.chatRefreshBtn.classList.remove("hidden");
+  }
+}
+on("stateChange", setHint);
 function handleMessage(e) {
   try {
     const data = JSON.parse(e.data);
@@ -572,20 +603,12 @@ function connect2() {
   const url2 = protocol + "//" + location.host + "/ws";
   connect(url2, {
     onOpen: () => {
-      if (els.hint)
-        els.hint.style.display = "none";
-      if (els.chatRefreshBtn)
-        els.chatRefreshBtn.classList.add("hidden");
       fetchHistory();
     },
     onMessage: handleMessage,
     onClose: (e) => {
       reset();
       clearPending();
-      if (els.hint)
-        els.hint.style.display = "flex";
-      if (els.chatRefreshBtn)
-        els.chatRefreshBtn.classList.remove("hidden");
       if (onStateChange)
         onStateChange("disconnect");
     }
@@ -811,7 +834,7 @@ function showOwnerDisconnected() {
   const hint = getHint();
   if (!hint)
     return;
-  const p = hint.querySelector("p");
+  const p = getEl2("owner-hint-text");
   if (p)
     p.textContent = "Backend not connected. Check your connection and refresh.";
   const btn = getEl2("owner-refresh-btn");
@@ -1112,6 +1135,9 @@ function connectOwnerWs() {
       const hint = getHint();
       if (hint)
         hint.style.display = "none";
+      const p = getEl2("owner-hint-text");
+      if (p)
+        p.textContent = "Connected. Send a message to start.";
       const btn = getEl2("owner-refresh-btn");
       if (btn)
         btn.classList.add("hidden");
@@ -1524,6 +1550,10 @@ function handleLogout() {
   els.messages.innerHTML = "";
   if (els.hint)
     els.hint.style.display = "block";
+  if (els.hintText)
+    els.hintText.textContent = els.hintText.dataset.fallback || els.hintText.textContent;
+  if (els.chatRefreshBtn)
+    els.chatRefreshBtn.classList.add("hidden");
   showForm();
 }
 function handleSubmit(e) {

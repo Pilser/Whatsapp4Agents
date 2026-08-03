@@ -127,6 +127,8 @@ function handleLogout() {
   connection.disconnect()
   els.messages.innerHTML = ''
   if (els.hint) els.hint.style.display = 'block'
+  if (els.hintText) els.hintText.textContent = els.hintText.dataset.fallback || els.hintText.textContent
+  if (els.chatRefreshBtn) els.chatRefreshBtn.classList.add('hidden')
   auth.showForm()
 }
 

@@ -8,6 +8,27 @@ import * as toolCalls from './tool-calls.js'
 export let onStateChange = null
 export function setOnStateChange(cb) { onStateChange = cb }
 
+function setHint(state) {
+  if (!els.hint) return
+  const fallback = els.hintText ? (els.hintText.dataset.fallback || els.hintText.textContent) : ''
+  switch (state) {
+    case network.State.CONNECTING:
+      els.hint.style.display = 'flex'
+      if (els.hintText) els.hintText.textContent = 'Connecting to backend…'
+      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.add('hidden')
+      break
+    case network.State.CONNECTED:
+      els.hint.style.display = 'none'
+      break
+    default:
+      els.hint.style.display = 'flex'
+      if (els.hintText) els.hintText.textContent = fallback
+      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.remove('hidden')
+  }
+}
+
+network.on('stateChange', setHint)
+
 function handleMessage(e) {
   try {
     const data = JSON.parse(e.data)
@@ -56,16 +77,12 @@ export function connect() {
 
   network.connect(url, {
     onOpen: () => {
-      if (els.hint) els.hint.style.display = 'none'
-      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.add('hidden')
       fetchHistory()
     },
     onMessage: handleMessage,
     onClose: (e) => {
       streaming.reset()
       toolCalls.clearPending()
-      if (els.hint) els.hint.style.display = 'flex'
-      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.remove('hidden')
       if (onStateChange) onStateChange('disconnect')
     },
   })

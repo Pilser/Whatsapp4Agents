@@ -5,6 +5,7 @@ export function init() {
   els.input = document.getElementById('chat-input')
   els.messages = document.getElementById('chat-messages')
   els.hint = document.getElementById('fallback-hint')
+  els.hintText = document.getElementById('chat-hint-text')
   els.chatRefreshBtn = document.getElementById('chat-refresh-btn')
   els.typingEl = document.getElementById('typing-indicator')
   els.authSection = document.getElementById('auth-section')

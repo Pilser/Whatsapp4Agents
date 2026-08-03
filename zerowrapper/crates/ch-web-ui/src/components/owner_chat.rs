@@ -14,7 +14,7 @@ pub async fn owner_chat() -> Result {
             </div>
             <div id="owner-messages" class="flex-1 overflow-y-auto px-4 py-4">
                 <div id="owner-hint" class="flex flex-col items-center justify-center py-10 gap-3">
-                    <p class="text-xs text-center" style="color: var(--color-text-weak);">"Connected. Send a message to start."</p>
+                    <p id="owner-hint-text" class="text-xs text-center" style="color: var(--color-text-weak);">"Connecting to backend…"</p>
                     <button id="owner-refresh-btn" class="hidden flex items-center gap-1.5 px-3 py-1.5 rounded text-xs cursor-pointer transition" style="color: var(--color-text-weak); border: 1px solid var(--color-border-weak); background: var(--color-bg-weak);" type="button">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                         "Refresh"

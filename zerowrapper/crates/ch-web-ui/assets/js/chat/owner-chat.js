@@ -24,7 +24,7 @@ function getHint() { return getEl('owner-hint') }
 function showOwnerDisconnected() {
   const hint = getHint()
   if (!hint) return
-  const p = hint.querySelector('p')
+  const p = getEl('owner-hint-text')
   if (p) p.textContent = 'Backend not connected. Check your connection and refresh.'
   const btn = getEl('owner-refresh-btn')
   if (btn) btn.classList.remove('hidden')
@@ -320,6 +320,8 @@ export function connectOwnerWs() {
     onOpen: () => {
       const hint = getHint()
       if (hint) hint.style.display = 'none'
+      const p = getEl('owner-hint-text')
+      if (p) p.textContent = 'Connected. Send a message to start.'
       const btn = getEl('owner-refresh-btn')
       if (btn) btn.classList.add('hidden')
       ownerFetchHistory()
