@@ -61,14 +61,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let zeroclaw = zw_channels::ZeroClawBridge::new(&config.zeroclaw_socket, db.clone());
-    let mut channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
+    let channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
 
     let primary_bind = config.ch_web.bind.clone();
-    let legacy_bind = config.ch_web.ui_bind();
-
-    channels.register(Box::new(
-        ch_web::WebChannel::new(&legacy_bind, &config.ch_web.agent, cache.clone(), config.ch_web.dist_path.clone(), config.ch_web.upload_dir.clone(), db.clone())
-    ));
 
     let registry_handle = channels.registry_handle();
     let zeroclaw_handle = Arc::new(channels.zeroclaw_handle());

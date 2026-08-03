@@ -12,7 +12,6 @@ members = [
     "zw-mcp",
     "zw-channels",
     "crates/mcp-web-files-render",
-    "crates/ch-web",
     "crates/ch-web-ui",
 ]
 
@@ -23,7 +22,6 @@ zw-cache = { path = "zw-cache" }
 zw-mcp = { path = "zw-mcp" }
 zw-channels = { path = "zw-channels" }
 mcp-web-files-render = { path = "crates/mcp-web-files-render" }
-ch-web = { path = "crates/ch-web" }
 ch-web-ui = { path = "crates/ch-web-ui" }
 tokio = { workspace = true }
 tracing = { workspace = true }
