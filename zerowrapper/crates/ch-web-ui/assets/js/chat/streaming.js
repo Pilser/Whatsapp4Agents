@@ -1,11 +1,11 @@
 import { marked } from 'marked'
 import { els } from './dom.js'
-import { BOT_AVATAR, escapeHtml } from './constants.js'
+import { BOT_AVATAR } from './constants.js'
 import { render as renderMarkdown } from './markdown.js'
 
 let el = null
 let content = ''
-let thinking = ''
+let activeThought = null
 let streamId = 0
 let renderPending = false
 let onFinalize = null
@@ -37,9 +37,6 @@ function scheduleRender(id) {
     if (streamId !== id) return
     const target = getEl()
     let html = ''
-    if (thinking) {
-      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
-    }
     if (content) {
       html += marked.parse(content)
     }
@@ -50,44 +47,61 @@ function scheduleRender(id) {
 
 export function handleThinking(text) {
   showTyping()
-  thinking += text
-  scheduleRender(streamId)
+  if (!activeThought) {
+    const pill = document.createElement('div')
+    pill.className = 'thought-pill'
+    pill.innerHTML = '<div class="tc-pill-inner">+ thoughts</div>' +
+      '<div class="tc-pill-detail hidden"><pre></pre></div>'
+    pill.addEventListener('click', () => {
+      const detail = pill.querySelector('.tc-pill-detail')
+      if (detail) detail.classList.toggle('hidden')
+    })
+    els.messages.appendChild(pill)
+    const detail = pill.querySelector('.tc-pill-detail')
+    if (detail) detail.classList.remove('hidden')
+    pill.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    activeThought = pill
+  }
+  const pre = activeThought.querySelector('.tc-pill-detail pre')
+  if (pre) pre.textContent += text
+}
+
+function finalizeThought() {
+  if (activeThought) {
+    const detail = activeThought.querySelector('.tc-pill-detail')
+    if (detail) detail.classList.add('hidden')
+    activeThought = null
+  }
 }
 
 export function handleChunk(text) {
+  finalizeThought()
   hideTyping()
   content += text
   scheduleRender(streamId)
 }
 
 export function finalize() {
+  finalizeThought()
   if (!el) { if (onFinalize) onFinalize(); return }
   const target = el
-  let html = ''
-  if (thinking) {
-    html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
-  }
   const trimmed = content.trim()
   if (trimmed) {
     target.className = 'msg-content chat-markdown'
-    html += marked.parse(trimmed)
-    renderMarkdown(target, html)
-  } else if (thinking) {
-    target.className = 'msg-content'
-    target.textContent = thinking
+    renderMarkdown(target, marked.parse(trimmed))
   }
   el = null
   content = ''
-  thinking = ''
   streamId++
   if (onFinalize) onFinalize()
 }
 
 export function finalizeIfActive() {
-  if (thinking || content) finalize()
+  if (activeThought || content) finalize()
 }
 
 export function handleDone(text) {
+  finalizeThought()
   hideTyping()
   if (text) content = text
   finalize()
@@ -98,18 +112,23 @@ export function isActive() {
 }
 
 export function cancel() {
+  finalizeThought()
   finalize()
   hideTyping()
 }
 
 export function reset() {
+  if (activeThought) {
+    const parent = activeThought.parentElement
+    if (parent) parent.remove()
+    activeThought = null
+  }
   if (el) {
     const parent = el.parentElement
     if (parent) parent.remove()
     el = null
   }
   content = ''
-  thinking = ''
   streamId++
 }
 

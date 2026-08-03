@@ -14,7 +14,7 @@ let streamingEl = null
 let onFinalize = null
 let typingTimer = null
 let pendingToolCalls = new Map()
-let thinkingContent = ''
+let activeThought = null
 
 function getEl(id) { return document.getElementById(id) }
 function getContainer() { return getEl('owner-messages') }
@@ -128,9 +128,9 @@ function hideTyping() {
 }
 
 function resetStreaming() {
+  finalizeThought()
   streamingContent = ''
   streamingEl = null
-  thinkingContent = ''
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null }
   hideTyping()
 }
@@ -138,15 +138,13 @@ function resetStreaming() {
 export function finalizeStreaming() {
   if (streamingEl) {
     const text = streamingContent
-    const thinkText = thinkingContent
     streamingContent = ''
     streamingEl = null
-    thinkingContent = ''
     const container = getContainer()
     const existing = container ? container.querySelector('.message-row.streaming') : null
     if (existing) existing.remove()
 
-    if (thinkText || text.trim()) {
+    if (text.trim()) {
       const row = document.createElement('div')
       row.className = 'message-row assistant'
       const avatar = document.createElement('div')
@@ -155,15 +153,7 @@ export function finalizeStreaming() {
       row.appendChild(avatar)
       const content = document.createElement('div')
       content.className = 'msg-content chat-markdown'
-
-      let html = ''
-      if (thinkText) {
-        html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinkText) + '</pre></details></div>'
-      }
-      if (text.trim()) {
-        html += marked.parse(text.trim())
-      }
-      renderMarkdown(content, html)
+      renderMarkdown(content, marked.parse(text.trim()))
       row.appendChild(content)
       if (container) {
         container.appendChild(row)
@@ -174,18 +164,46 @@ export function finalizeStreaming() {
 }
 
 function handleThinking(content) {
-  thinkingContent += (content || '')
   showTyping()
   if (typingTimer) clearTimeout(typingTimer)
   typingTimer = setTimeout(() => { hideTyping() }, 30000)
+  if (!activeThought) {
+    const container = getContainer()
+    if (!container) return
+    const hint = getHint()
+    if (hint) hint.style.display = 'none'
+    const row = document.createElement('div')
+    row.className = 'message-row assistant'
+    const avatar = document.createElement('div')
+    avatar.className = 'msg-avatar'
+    avatar.innerHTML = BOT_AVATAR
+    row.appendChild(avatar)
+    const contentDiv = document.createElement('div')
+    contentDiv.className = 'msg-content'
+    contentDiv.innerHTML = '<details class="thinking-block" open><summary>+ thoughts</summary><pre></pre></details>'
+    row.appendChild(contentDiv)
+    container.appendChild(row)
+    activeThought = row
+    row.scrollIntoView({ block: 'end' })
+  }
+  const pre = activeThought.querySelector('.thinking-block pre')
+  if (pre) pre.textContent += (content || '')
+}
+
+function finalizeThought() {
+  if (activeThought) {
+    const details = activeThought.querySelector('.thinking-block')
+    if (details) details.removeAttribute('open')
+    activeThought = null
+  }
 }
 
 function handleChunk(content) {
+  finalizeThought()
   hideTyping()
   if (typingTimer) { clearTimeout(typingTimer); typingTimer = null }
   if (!streamingEl) {
     streamingContent = ''
-    thinkingContent = ''
     streamingEl = document.createElement('div')
     streamingEl.className = 'message-row assistant streaming'
     const avatar = document.createElement('div')
@@ -204,18 +222,12 @@ function handleChunk(content) {
   streamingContent += content
   const contentDiv = streamingEl.querySelector('.msg-content')
   if (contentDiv) {
-    let html = ''
-    if (thinkingContent) {
-      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinkingContent) + '</pre></details></div>'
-    }
-    if (streamingContent) {
-      html += marked.parse(streamingContent)
-    }
-    renderMarkdown(contentDiv, html)
+    renderMarkdown(contentDiv, marked.parse(streamingContent))
   }
 }
 
 function handleDone(content) {
+  finalizeThought()
   if (content && content.trim()) {
     streamingContent = content
   }
@@ -225,6 +237,7 @@ function handleDone(content) {
 }
 
 function handleToolCall(id, name, args) {
+  finalizeThought()
   finalizeStreaming()
   const container = getContainer()
   if (!container) return
@@ -252,6 +265,7 @@ function handleToolCall(id, name, args) {
 }
 
 function handleToolResult(id, name, output) {
+  finalizeThought()
   const row = pendingToolCalls.get(id)
   if (!row) return
   const details = row.querySelector('.tool-call-details')
@@ -349,6 +363,7 @@ export function connectOwnerWs() {
             handleDone(data.content)
             break
           case 'error':
+            finalizeThought()
             addMessage('error', data.message || data.error || 'Unknown error')
             break
         }

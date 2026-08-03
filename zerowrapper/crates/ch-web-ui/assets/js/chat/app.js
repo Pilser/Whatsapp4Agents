@@ -273,7 +273,7 @@ function render(el, html) {
 import { marked } from "marked";
 var el = null;
 var content = "";
-var thinking = "";
+var activeThought = null;
 var streamId = 0;
 var renderPending = false;
 var onFinalize = null;
@@ -307,9 +307,6 @@ function scheduleRender(id) {
       return;
     const target = getEl();
     let html = "";
-    if (thinking) {
-      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + "</pre></details></div>";
-    }
     if (content) {
       html += marked.parse(content);
     }
@@ -319,52 +316,77 @@ function scheduleRender(id) {
 }
 function handleThinking(text) {
   showTyping();
-  thinking += text;
-  scheduleRender(streamId);
+  if (!activeThought) {
+    const pill = document.createElement("div");
+    pill.className = "thought-pill";
+    pill.innerHTML = '<div class="tc-pill-inner">+ thoughts</div>' + '<div class="tc-pill-detail hidden"><pre></pre></div>';
+    pill.addEventListener("click", () => {
+      const detail2 = pill.querySelector(".tc-pill-detail");
+      if (detail2)
+        detail2.classList.toggle("hidden");
+    });
+    els.messages.appendChild(pill);
+    const detail = pill.querySelector(".tc-pill-detail");
+    if (detail)
+      detail.classList.remove("hidden");
+    pill.scrollIntoView({ behavior: "smooth", block: "end" });
+    activeThought = pill;
+  }
+  const pre = activeThought.querySelector(".tc-pill-detail pre");
+  if (pre)
+    pre.textContent += text;
+}
+function finalizeThought() {
+  if (activeThought) {
+    const detail = activeThought.querySelector(".tc-pill-detail");
+    if (detail)
+      detail.classList.add("hidden");
+    activeThought = null;
+  }
 }
 function handleChunk(text) {
+  finalizeThought();
   hideTyping();
   content += text;
   scheduleRender(streamId);
 }
 function finalize() {
+  finalizeThought();
   if (!el) {
     if (onFinalize)
       onFinalize();
     return;
   }
   const target = el;
-  let html = "";
-  if (thinking) {
-    html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + "</pre></details></div>";
-  }
   const trimmed = content.trim();
   if (trimmed) {
     target.className = "msg-content chat-markdown";
-    html += marked.parse(trimmed);
-    render(target, html);
-  } else if (thinking) {
-    target.className = "msg-content";
-    target.textContent = thinking;
+    render(target, marked.parse(trimmed));
   }
   el = null;
   content = "";
-  thinking = "";
   streamId++;
   if (onFinalize)
     onFinalize();
 }
 function finalizeIfActive() {
-  if (thinking || content)
+  if (activeThought || content)
     finalize();
 }
 function handleDone(text) {
+  finalizeThought();
   hideTyping();
   if (text)
     content = text;
   finalize();
 }
 function reset() {
+  if (activeThought) {
+    const parent = activeThought.parentElement;
+    if (parent)
+      parent.remove();
+    activeThought = null;
+  }
   if (el) {
     const parent = el.parentElement;
     if (parent)
@@ -372,7 +394,6 @@ function reset() {
     el = null;
   }
   content = "";
-  thinking = "";
   streamId++;
 }
 function showTyping() {
@@ -821,7 +842,7 @@ var streamingEl = null;
 var onFinalize2 = null;
 var typingTimer = null;
 var pendingToolCalls = new Map;
-var thinkingContent = "";
+var activeThought2 = null;
 function getEl2(id) {
   return document.getElementById(id);
 }
@@ -943,9 +964,9 @@ function hideTyping2() {
     el2.classList.add("hidden");
 }
 function resetStreaming() {
+  finalizeThought2();
   streamingContent = "";
   streamingEl = null;
-  thinkingContent = "";
   if (typingTimer) {
     clearTimeout(typingTimer);
     typingTimer = null;
@@ -955,15 +976,13 @@ function resetStreaming() {
 function finalizeStreaming() {
   if (streamingEl) {
     const text = streamingContent;
-    const thinkText = thinkingContent;
     streamingContent = "";
     streamingEl = null;
-    thinkingContent = "";
     const container = getContainer();
     const existing = container ? container.querySelector(".message-row.streaming") : null;
     if (existing)
       existing.remove();
-    if (thinkText || text.trim()) {
+    if (text.trim()) {
       const row = document.createElement("div");
       row.className = "message-row assistant";
       const avatar = document.createElement("div");
@@ -972,14 +991,7 @@ function finalizeStreaming() {
       row.appendChild(avatar);
       const content2 = document.createElement("div");
       content2.className = "msg-content chat-markdown";
-      let html = "";
-      if (thinkText) {
-        html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinkText) + "</pre></details></div>";
-      }
-      if (text.trim()) {
-        html += marked3.parse(text.trim());
-      }
-      render(content2, html);
+      render(content2, marked3.parse(text.trim()));
       row.appendChild(content2);
       if (container) {
         container.appendChild(row);
@@ -989,15 +1001,47 @@ function finalizeStreaming() {
   }
 }
 function handleThinking2(content2) {
-  thinkingContent += content2 || "";
   showTyping2();
   if (typingTimer)
     clearTimeout(typingTimer);
   typingTimer = setTimeout(() => {
     hideTyping2();
   }, 30000);
+  if (!activeThought2) {
+    const container = getContainer();
+    if (!container)
+      return;
+    const hint = getHint();
+    if (hint)
+      hint.style.display = "none";
+    const row = document.createElement("div");
+    row.className = "message-row assistant";
+    const avatar = document.createElement("div");
+    avatar.className = "msg-avatar";
+    avatar.innerHTML = BOT_AVATAR;
+    row.appendChild(avatar);
+    const contentDiv = document.createElement("div");
+    contentDiv.className = "msg-content";
+    contentDiv.innerHTML = '<details class="thinking-block" open><summary>+ thoughts</summary><pre></pre></details>';
+    row.appendChild(contentDiv);
+    container.appendChild(row);
+    activeThought2 = row;
+    row.scrollIntoView({ block: "end" });
+  }
+  const pre = activeThought2.querySelector(".thinking-block pre");
+  if (pre)
+    pre.textContent += content2 || "";
+}
+function finalizeThought2() {
+  if (activeThought2) {
+    const details = activeThought2.querySelector(".thinking-block");
+    if (details)
+      details.removeAttribute("open");
+    activeThought2 = null;
+  }
 }
 function handleChunk2(content2) {
+  finalizeThought2();
   hideTyping2();
   if (typingTimer) {
     clearTimeout(typingTimer);
@@ -1005,7 +1049,6 @@ function handleChunk2(content2) {
   }
   if (!streamingEl) {
     streamingContent = "";
-    thinkingContent = "";
     streamingEl = document.createElement("div");
     streamingEl.className = "message-row assistant streaming";
     const avatar = document.createElement("div");
@@ -1024,17 +1067,11 @@ function handleChunk2(content2) {
   streamingContent += content2;
   const contentDiv = streamingEl.querySelector(".msg-content");
   if (contentDiv) {
-    let html = "";
-    if (thinkingContent) {
-      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinkingContent) + "</pre></details></div>";
-    }
-    if (streamingContent) {
-      html += marked3.parse(streamingContent);
-    }
-    render(contentDiv, html);
+    render(contentDiv, marked3.parse(streamingContent));
   }
 }
 function handleDone2(content2) {
+  finalizeThought2();
   if (content2 && content2.trim()) {
     streamingContent = content2;
   }
@@ -1046,6 +1083,7 @@ function handleDone2(content2) {
   document.dispatchEvent(new CustomEvent("owner-stream-done"));
 }
 function handleToolCall2(id, name, args) {
+  finalizeThought2();
   finalizeStreaming();
   const container = getContainer();
   if (!container)
@@ -1070,6 +1108,7 @@ function handleToolCall2(id, name, args) {
   pendingToolCalls.set(id, row);
 }
 function handleToolResult2(id, name, output) {
+  finalizeThought2();
   const row = pendingToolCalls.get(id);
   if (!row)
     return;
@@ -1171,6 +1210,7 @@ function connectOwnerWs() {
             handleDone2(data.content);
             break;
           case "error":
+            finalizeThought2();
             addMessage2("error", data.message || data.error || "Unknown error");
             break;
         }
