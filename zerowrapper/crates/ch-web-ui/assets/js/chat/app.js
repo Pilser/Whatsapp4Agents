@@ -193,8 +193,6 @@ import { marked as marked2 } from "marked";
 // constants.js
 var USER_AVATAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 var BOT_AVATAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
-var THINK_ICON = '<svg class="think-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.5 5h5l-4 3 1.5 5-4-3-4 3 1.5-5-4-3h5z"/></svg>';
-var TOOL_ICON = '<svg class="tc-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
 function escapeHtml(str) {
   if (!str)
     return "";
@@ -301,7 +299,7 @@ function scheduleRender(id) {
     const target = getEl();
     let html = "";
     if (thinking) {
-      html += '<div class="thinking-block"><details open><summary>' + THINK_ICON + " Thinking</summary><pre>" + escapeHtml(thinking) + "</pre></details></div>";
+      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + "</pre></details></div>";
     }
     if (content) {
       html += marked.parse(content);
@@ -329,7 +327,7 @@ function finalize() {
   const target = el;
   let html = "";
   if (thinking) {
-    html += '<div class="thinking-block"><details><summary>' + THINK_ICON + " Thinking</summary><pre>" + escapeHtml(thinking) + "</pre></details></div>";
+    html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + "</pre></details></div>";
   }
   const trimmed = content.trim();
   if (trimmed) {
@@ -476,7 +474,7 @@ function handleToolCall(id, name, args) {
   pill.className = "tool-call-pill";
   pill.dataset.id = id || "";
   const argsStr = args ? JSON.stringify(args, null, 2) : null;
-  pill.innerHTML = '<div class="tc-pill-inner">' + TOOL_ICON + '<span class="tc-pill-name">' + escapeHtml(name) + "</span>" + '<span class="tc-pill-status running">◌</span>' + "</div>" + (argsStr ? '<div class="tc-pill-detail hidden"><pre>' + escapeHtml(argsStr) + "</pre></div>" : "");
+  pill.innerHTML = '<div class="tc-pill-inner">' + "+ acting" + '<span class="tc-pill-status running">◌</span>' + "</div>" + (argsStr ? '<div class="tc-pill-detail hidden"><pre>' + escapeHtml(argsStr) + "</pre></div>" : "");
   pill.addEventListener("click", () => {
     const detail = pill.querySelector(".tc-pill-detail");
     if (detail)
@@ -931,7 +929,7 @@ function finalizeStreaming() {
       content2.className = "msg-content chat-markdown";
       let html = "";
       if (thinkText) {
-        html += '<div class="thinking-block"><details><summary>' + THINK_ICON + " Thinking</summary><pre>" + escapeHtml(thinkText) + "</pre></details></div>";
+        html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinkText) + "</pre></details></div>";
       }
       if (text.trim()) {
         html += marked3.parse(text.trim());
@@ -983,7 +981,7 @@ function handleChunk2(content2) {
   if (contentDiv) {
     let html = "";
     if (thinkingContent) {
-      html += '<div class="thinking-block"><details open><summary>' + THINK_ICON + " Thinking</summary><pre>" + escapeHtml(thinkingContent) + "</pre></details></div>";
+      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinkingContent) + "</pre></details></div>";
     }
     if (streamingContent) {
       html += marked3.parse(streamingContent);
@@ -1015,12 +1013,12 @@ function handleToolCall2(id, name, args) {
   row.dataset.toolCallId = id;
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar";
-  avatar.innerHTML = TOOL_ICON;
+  avatar.textContent = "+ acting";
   row.appendChild(avatar);
   const content2 = document.createElement("div");
   content2.className = "msg-content";
   const argsStr = typeof args === "string" ? args : JSON.stringify(args, null, 2);
-  content2.innerHTML = '<details class="tool-call-details">' + '<summary><span class="tc-pill-status running">◌</span> <span style="opacity:0.6">\uD83D\uDD27</span> Tool Call</summary>' + '<p style="margin:4px 0 2px;font-weight:600;font-size:0.8rem;">' + escapeHtml(name) + "</p>" + "<pre>" + escapeHtml(argsStr) + "</pre>" + "</details>";
+  content2.innerHTML = '<details class="tool-call-details">' + '<summary><span class="tc-pill-status running">◌</span> + acting</summary>' + '<p style="margin:4px 0 2px;font-weight:600;font-size:0.8rem;">' + escapeHtml(name) + "</p>" + "<pre>" + escapeHtml(argsStr) + "</pre>" + "</details>";
   row.appendChild(content2);
   container.appendChild(row);
   row.scrollIntoView({ block: "end" });

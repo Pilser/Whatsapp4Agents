@@ -1,7 +1,7 @@
 import * as network from './network.js'
 import { marked } from 'marked'
 import { render as renderMarkdown } from './markdown.js'
-import { USER_AVATAR, BOT_AVATAR, THINK_ICON, TOOL_ICON, escapeHtml } from './constants.js'
+import { USER_AVATAR, BOT_AVATAR, escapeHtml } from './constants.js'
 
 export const state = {
   sessionId: '',
@@ -148,7 +148,7 @@ export function finalizeStreaming() {
 
       let html = ''
       if (thinkText) {
-        html += '<div class="thinking-block"><details><summary>' + THINK_ICON + ' Thinking</summary><pre>' + escapeHtml(thinkText) + '</pre></details></div>'
+        html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinkText) + '</pre></details></div>'
       }
       if (text.trim()) {
         html += marked.parse(text.trim())
@@ -196,7 +196,7 @@ function handleChunk(content) {
   if (contentDiv) {
     let html = ''
     if (thinkingContent) {
-      html += '<div class="thinking-block"><details open><summary>' + THINK_ICON + ' Thinking</summary><pre>' + escapeHtml(thinkingContent) + '</pre></details></div>'
+      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinkingContent) + '</pre></details></div>'
     }
     if (streamingContent) {
       html += marked.parse(streamingContent)
@@ -225,13 +225,13 @@ function handleToolCall(id, name, args) {
   row.dataset.toolCallId = id
   const avatar = document.createElement('div')
   avatar.className = 'msg-avatar'
-  avatar.innerHTML = TOOL_ICON
+  avatar.textContent = '+ acting'
   row.appendChild(avatar)
   const content = document.createElement('div')
   content.className = 'msg-content'
   const argsStr = typeof args === 'string' ? args : JSON.stringify(args, null, 2)
   content.innerHTML = '<details class="tool-call-details">' +
-    '<summary><span class="tc-pill-status running">\u25CC</span> <span style="opacity:0.6">\uD83D\uDD27</span> Tool Call</summary>' +
+    '<summary><span class="tc-pill-status running">\u25CC</span> + acting</summary>' +
     '<p style="margin:4px 0 2px;font-weight:600;font-size:0.8rem;">' + escapeHtml(name) + '</p>' +
     '<pre>' + escapeHtml(argsStr) + '</pre>' +
   '</details>'

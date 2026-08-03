@@ -1,5 +1,5 @@
 import { els } from './dom.js'
-import { TOOL_ICON, escapeHtml } from './constants.js'
+import { escapeHtml } from './constants.js'
 
 let pending = []
 
@@ -9,8 +9,7 @@ export function handleToolCall(id, name, args) {
   pill.dataset.id = id || ''
   const argsStr = args ? JSON.stringify(args, null, 2) : null
   pill.innerHTML = '<div class="tc-pill-inner">' +
-    TOOL_ICON +
-    '<span class="tc-pill-name">' + escapeHtml(name) + '</span>' +
+    '+ acting' +
     '<span class="tc-pill-status running">\u25CC</span>' +
   '</div>' +
   (argsStr ? '<div class="tc-pill-detail hidden"><pre>' + escapeHtml(argsStr) + '</pre></div>' : '')

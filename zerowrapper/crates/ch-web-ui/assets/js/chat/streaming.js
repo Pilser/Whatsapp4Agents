@@ -1,6 +1,6 @@
 import { marked } from 'marked'
 import { els } from './dom.js'
-import { BOT_AVATAR, THINK_ICON, escapeHtml } from './constants.js'
+import { BOT_AVATAR, escapeHtml } from './constants.js'
 import { render as renderMarkdown } from './markdown.js'
 
 let el = null
@@ -38,7 +38,7 @@ function scheduleRender(id) {
     const target = getEl()
     let html = ''
     if (thinking) {
-      html += '<div class="thinking-block"><details open><summary>' + THINK_ICON + ' Thinking</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
+      html += '<div class="thinking-block"><details open><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
     }
     if (content) {
       html += marked.parse(content)
@@ -65,7 +65,7 @@ export function finalize() {
   const target = el
   let html = ''
   if (thinking) {
-    html += '<div class="thinking-block"><details><summary>' + THINK_ICON + ' Thinking</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
+    html += '<div class="thinking-block"><details><summary>+ thoughts</summary><pre>' + escapeHtml(thinking) + '</pre></details></div>'
   }
   const trimmed = content.trim()
   if (trimmed) {
