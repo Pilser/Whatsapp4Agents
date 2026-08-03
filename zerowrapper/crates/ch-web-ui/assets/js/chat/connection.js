@@ -57,13 +57,15 @@ export function connect() {
   network.connect(url, {
     onOpen: () => {
       if (els.hint) els.hint.style.display = 'none'
+      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.add('hidden')
       fetchHistory()
     },
     onMessage: handleMessage,
     onClose: (e) => {
       streaming.reset()
       toolCalls.clearPending()
-      if (els.hint) els.hint.style.display = 'block'
+      if (els.hint) els.hint.style.display = 'flex'
+      if (els.chatRefreshBtn) els.chatRefreshBtn.classList.remove('hidden')
       if (onStateChange) onStateChange('disconnect')
     },
   })

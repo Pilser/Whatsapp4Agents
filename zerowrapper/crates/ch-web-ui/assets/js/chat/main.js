@@ -27,6 +27,10 @@ export function init() {
 
   owner.init()
 
+  if (els.chatRefreshBtn) {
+    els.chatRefreshBtn.addEventListener('click', () => location.reload())
+  }
+
   if (!els.form) return
 
   lightbox.init(els.messages)

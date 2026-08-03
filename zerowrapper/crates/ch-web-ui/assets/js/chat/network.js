@@ -33,7 +33,7 @@ function emit(event, data) {
 }
 
 export function connect(wsUrl, handlers) {
-  url = wsUrl
+  if (wsUrl) url = wsUrl
   if (handlers) callbacks = handlers
 
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return

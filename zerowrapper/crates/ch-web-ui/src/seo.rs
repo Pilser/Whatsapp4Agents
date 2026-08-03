@@ -65,7 +65,7 @@ pub fn business_jsonld(business: &Business, site: &SiteInfo) -> serde_json::Valu
             "telephone": business.telephone,
         })];
     }
-    let mut node = json!({
+    let node = json!({
         "@context": "https://schema.org",
         "@type": biz_type,
         "name": business.name.as_deref().unwrap_or_else(|| site.brand_or_title()),

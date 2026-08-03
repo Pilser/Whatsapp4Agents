@@ -21,7 +21,8 @@ function emit(event, data) {
   listenerMap.get(event)?.forEach((fn) => fn(data));
 }
 function connect(wsUrl, handlers) {
-  url = wsUrl;
+  if (wsUrl)
+    url = wsUrl;
   if (handlers)
     callbacks = handlers;
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING))
@@ -107,6 +108,7 @@ function init() {
   els.input = document.getElementById("chat-input");
   els.messages = document.getElementById("chat-messages");
   els.hint = document.getElementById("fallback-hint");
+  els.chatRefreshBtn = document.getElementById("chat-refresh-btn");
   els.typingEl = document.getElementById("typing-indicator");
   els.authSection = document.getElementById("auth-section");
   els.userBadge = document.getElementById("user-badge");
@@ -572,6 +574,8 @@ function connect2() {
     onOpen: () => {
       if (els.hint)
         els.hint.style.display = "none";
+      if (els.chatRefreshBtn)
+        els.chatRefreshBtn.classList.add("hidden");
       fetchHistory();
     },
     onMessage: handleMessage,
@@ -579,7 +583,9 @@ function connect2() {
       reset();
       clearPending();
       if (els.hint)
-        els.hint.style.display = "block";
+        els.hint.style.display = "flex";
+      if (els.chatRefreshBtn)
+        els.chatRefreshBtn.classList.remove("hidden");
       if (onStateChange)
         onStateChange("disconnect");
     }
@@ -800,6 +806,18 @@ function getTyping() {
 }
 function getHint() {
   return getEl2("owner-hint");
+}
+function showOwnerDisconnected() {
+  const hint = getHint();
+  if (!hint)
+    return;
+  const p = hint.querySelector("p");
+  if (p)
+    p.textContent = "Backend not connected. Check your connection and refresh.";
+  const btn = getEl2("owner-refresh-btn");
+  if (btn)
+    btn.classList.remove("hidden");
+  hint.style.display = "flex";
 }
 function extractAttachments(raw) {
   if (!raw || !raw.startsWith("{"))
@@ -1083,6 +1101,10 @@ function connectOwnerWs() {
     disconnect();
   resetStreaming();
   pendingToolCalls.clear();
+  const refreshBtn = getEl2("owner-refresh-btn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => location.reload());
+  }
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const url2 = protocol + "//" + location.host + "/ws";
   connect(url2, {
@@ -1090,6 +1112,9 @@ function connectOwnerWs() {
       const hint = getHint();
       if (hint)
         hint.style.display = "none";
+      const btn = getEl2("owner-refresh-btn");
+      if (btn)
+        btn.classList.add("hidden");
       ownerFetchHistory();
     },
     onMessage: (e) => {
@@ -1126,6 +1151,7 @@ function connectOwnerWs() {
     onClose: () => {
       resetStreaming();
       pendingToolCalls.clear();
+      showOwnerDisconnected();
     }
   });
 }
@@ -1394,6 +1420,9 @@ function init4() {
   logPendingResources();
   setTimeout(logPendingResources, 3000);
   init3();
+  if (els.chatRefreshBtn) {
+    els.chatRefreshBtn.addEventListener("click", () => location.reload());
+  }
   if (!els.form)
     return;
   init2(els.messages);

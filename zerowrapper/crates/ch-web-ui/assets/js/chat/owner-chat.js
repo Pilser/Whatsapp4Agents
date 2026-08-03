@@ -21,6 +21,16 @@ function getContainer() { return getEl('owner-messages') }
 function getTyping() { return getEl('owner-typing') }
 function getHint() { return getEl('owner-hint') }
 
+function showOwnerDisconnected() {
+  const hint = getHint()
+  if (!hint) return
+  const p = hint.querySelector('p')
+  if (p) p.textContent = 'Backend not connected. Check your connection and refresh.'
+  const btn = getEl('owner-refresh-btn')
+  if (btn) btn.classList.remove('hidden')
+  hint.style.display = 'flex'
+}
+
 function extractAttachments(raw) {
   if (!raw || !raw.startsWith('{')) return null
   try {
@@ -298,6 +308,11 @@ export function connectOwnerWs() {
   resetStreaming()
   pendingToolCalls.clear()
 
+  const refreshBtn = getEl('owner-refresh-btn')
+  if (refreshBtn) {
+    refreshBtn.addEventListener('click', () => location.reload())
+  }
+
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = protocol + '//' + location.host + '/ws'
 
@@ -305,6 +320,8 @@ export function connectOwnerWs() {
     onOpen: () => {
       const hint = getHint()
       if (hint) hint.style.display = 'none'
+      const btn = getEl('owner-refresh-btn')
+      if (btn) btn.classList.add('hidden')
       ownerFetchHistory()
     },
     onMessage: (e) => {
@@ -340,6 +357,7 @@ export function connectOwnerWs() {
     onClose: () => {
       resetStreaming()
       pendingToolCalls.clear()
+      showOwnerDisconnected()
     },
   })
 }
