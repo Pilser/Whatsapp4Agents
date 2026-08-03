@@ -318,7 +318,7 @@ function scheduleRender(id) {
   });
 }
 function handleThinking(text) {
-  hideTyping();
+  showTyping();
   thinking += text;
   scheduleRender(streamId);
 }
@@ -376,12 +376,16 @@ function reset() {
   streamId++;
 }
 function showTyping() {
-  if (els.typingEl)
+  if (els.typingEl) {
+    els.typingEl.classList.remove("hidden");
     els.typingEl.classList.add("active");
+  }
 }
 function hideTyping() {
-  if (els.typingEl)
+  if (els.typingEl) {
+    els.typingEl.classList.add("hidden");
     els.typingEl.classList.remove("active");
+  }
 }
 
 // messages.js

@@ -29,7 +29,13 @@ pub async fn chat_section(cx: &Cx) -> Result {
                     </button>
                 </div>
             </div>
-            <div id="typing-indicator" class="hidden" style="padding: 12px 16px 12px 52px; margin-bottom: 10px; position: relative;"></div>
+            <div id="typing-indicator" class="hidden" style="padding: 12px 16px 12px 52px; margin-bottom: 10px; position: relative;">
+                <div class="flex gap-1.5 items-center">
+                    <span class="w-3 h-3 rounded-full" style="background: var(--color-text-weak); animation: chat-typing-bounce 1.4s infinite ease-in-out both;"></span>
+                    <span class="w-3 h-3 rounded-full" style="background: var(--color-text-weak); animation: chat-typing-bounce 1.4s infinite ease-in-out both; animation-delay: 0.16s;"></span>
+                    <span class="w-3 h-3 rounded-full" style="background: var(--color-text-weak); animation: chat-typing-bounce 1.4s infinite ease-in-out both; animation-delay: 0.32s;"></span>
+                </div>
+            </div>
             <div id="chat-bottom-bar" style="position: sticky; bottom: 0; z-index: 10; background: var(--color-bg); padding-top: 12px; margin-top: 8px;">
                 <div id="auth-section">
                     <div id="auth-form" class="flex flex-col gap-3 mt-6 p-5 rounded-xl" style="border: 1px solid var(--color-border); background: var(--color-bg);">
@@ -105,6 +111,7 @@ pub async fn chat_section(cx: &Cx) -> Result {
             </section>
         </section>
         owner_login()
+        <style>{ (Unescaped::new_unchecked(r#"@keyframes chat-typing-bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }"#)) }</style>
         <script>{ (Unescaped::new_unchecked(r#"
         document.querySelectorAll('.faq-item').forEach(function(details) {
             details.addEventListener('toggle', function() {

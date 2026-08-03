@@ -49,7 +49,7 @@ function scheduleRender(id) {
 }
 
 export function handleThinking(text) {
-  hideTyping()
+  showTyping()
   thinking += text
   scheduleRender(streamId)
 }
@@ -114,9 +114,15 @@ export function reset() {
 }
 
 export function showTyping() {
-  if (els.typingEl) els.typingEl.classList.add('active')
+  if (els.typingEl) {
+    els.typingEl.classList.remove('hidden')
+    els.typingEl.classList.add('active')
+  }
 }
 
 export function hideTyping() {
-  if (els.typingEl) els.typingEl.classList.remove('active')
+  if (els.typingEl) {
+    els.typingEl.classList.add('hidden')
+    els.typingEl.classList.remove('active')
+  }
 }
