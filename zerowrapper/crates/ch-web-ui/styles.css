@@ -372,11 +372,92 @@
   .math-block .katex-display { margin: 0; }
   .chat-markdown .mermaid,
   #whiteboard-body .mermaid {
-    overflow-x: auto;
+    overflow: hidden;
     margin: 0.75rem 0;
     padding: 8px;
     border: 1px solid var(--color-border-weak);
     border-radius: 8px;
     background: var(--color-bg-weak);
   }
+  .chat-markdown .mermaid svg,
+  #whiteboard-body .mermaid svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    cursor: zoom-in;
+  }
+
+  #mermaid-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0, 0, 0, 0.85);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s;
+  }
+  #mermaid-modal.active { opacity: 1; pointer-events: auto; }
+  #mermaid-modal .mm-stage {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    cursor: grab;
+    touch-action: none;
+  }
+  #mermaid-modal .mm-stage:active { cursor: grabbing; }
+  #mermaid-modal .mm-canvas {
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+  #mermaid-modal .mm-canvas svg {
+    display: block;
+    max-width: none;
+    max-height: none;
+    background: var(--color-bg-weak);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  }
+  #mermaid-modal .mm-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--color-bg-interactive-weak);
+    color: #fff;
+    font-size: 1.25rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    z-index: 2;
+  }
+  #mermaid-modal .mm-close:hover { background: var(--color-bg-interactive); }
+  #mermaid-modal .mm-controls {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 8px;
+    z-index: 2;
+  }
+  #mermaid-modal .mm-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--color-bg-interactive-weak);
+    color: #fff;
+    font-size: 1.15rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+  }
+  #mermaid-modal .mm-btn:hover { background: var(--color-bg-interactive); }
 }

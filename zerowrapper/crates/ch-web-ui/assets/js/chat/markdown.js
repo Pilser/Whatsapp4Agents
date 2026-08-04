@@ -2,6 +2,7 @@ import hljs from 'highlight.js'
 import { marked } from 'marked'
 import katex from 'katex'
 import mermaid from 'mermaid'
+import * as mermaidModal from './mermaid-modal.js'
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -59,17 +60,260 @@ marked.use({
   ],
 })
 
-mermaid.initialize({ startOnLoad: false, theme: 'base' })
+function cssVar(name, fallback) {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return v || fallback
+}
+
+function mermaidTheme() {
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+  const bg = cssVar('--color-bg-weak', dark ? '#1a1a1a' : '#f7f7f5')
+  const border = dark ? cssVar('--color-border-weak', '#3faf3f') : cssVar('--color-border', '#2f8f2f')
+  return {
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      dark,
+      fontFamily: cssVar('--font-mono', 'monospace'),
+      background: bg,
+      mainBkg: bg,
+      nodeBkg: bg,
+      nodeBorder: border,
+      clusterBkg: cssVar('--color-bg', dark ? '#0a0a0a' : '#fcfcfb'),
+      clusterBorder: cssVar('--color-border-weak', border),
+      lineColor: cssVar('--color-text-weak', '#737373'),
+      textColor: cssVar('--color-text', '#212121'),
+      titleColor: cssVar('--color-text-strong', '#0d0d0d'),
+      nodeTextColor: cssVar('--color-text', '#212121'),
+      stateLabelColor: cssVar('--color-text', '#212121'),
+      requirementTextColor: cssVar('--color-text', '#212121'),
+      branchLabelColor: cssVar('--color-text', '#212121'),
+      quadrant1TextFill: cssVar('--color-text', '#212121'),
+      quadrant2TextFill: cssVar('--color-text', '#212121'),
+      quadrant3TextFill: cssVar('--color-text', '#212121'),
+      quadrant4TextFill: cssVar('--color-text', '#212121'),
+      quadrantPointTextFill: cssVar('--color-text', '#212121'),
+      quadrantXAxisTextFill: cssVar('--color-text', '#212121'),
+      quadrantYAxisTextFill: cssVar('--color-text', '#212121'),
+      quadrantTitleFill: cssVar('--color-text-strong', '#0d0d0d'),
+      primaryColor: cssVar('--color-bg-interactive', '#e50078'),
+      primaryBorderColor: cssVar('--color-bg-interactive', '#e50078'),
+      primaryTextColor: '#ffffff',
+      secondaryColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      secondaryTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      tertiaryColor: bg,
+      tertiaryTextColor: cssVar('--color-text', '#212121'),
+      edgeLabelBackground: cssVar('--color-bg', dark ? '#0a0a0a' : '#fcfcfb'),
+      labelBackground: cssVar('--color-bg', dark ? '#0a0a0a' : '#fcfcfb'),
+      actorBkg: bg,
+      actorBorder: cssVar('--color-border-weak', border),
+      actorTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      actorLineColor: cssVar('--color-border-weak', border),
+      signalColor: cssVar('--color-text', '#212121'),
+      signalTextColor: cssVar('--color-text', '#212121'),
+      labelBoxBkgColor: bg,
+      labelBoxBorderColor: cssVar('--color-border-weak', border),
+      labelTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      loopTextColor: cssVar('--color-text-weak', '#737373'),
+      noteBkgColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      noteTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      noteBorderColor: cssVar('--color-border-weak', border),
+      activationBkgColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      activationBorderColor: cssVar('--color-border', '#2f8f2f'),
+      sequenceNumberColor: cssVar('--color-text-inverted', '#ffffff'),
+      sequenceLineColor: cssVar('--color-text-weak', '#737373'),
+      taskBorder: cssVar('--color-border', '#2f8f2f'),
+      taskBkg: bg,
+      taskTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      taskTextOutsideColor: cssVar('--color-text-strong', '#0d0d0d'),
+      taskTextLightColor: cssVar('--color-text-strong', '#0d0d0d'),
+      taskTextOutsideLightColor: cssVar('--color-text-weak', '#737373'),
+      taskArrowColor: cssVar('--color-bg-interactive', '#e50078'),
+      sectionBkgColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      sectionBkgColor2: bg,
+      altSectionBkgColor: bg,
+      todayLineColor: cssVar('--color-bg-interactive', '#e50078'),
+      criticalBkgColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      criticalBorderColor: cssVar('--color-status-error', '#e03131'),
+      doneBkgColor: bg,
+      doneBorderColor: cssVar('--color-border', '#2f8f2f'),
+      pie1: '#e50078',
+      pie2: '#8f3f9f',
+      pie3: '#2f8f2f',
+      pie4: '#c98a2f',
+      pie5: '#3f6fc9',
+      pie6: '#9f3f6f',
+      pie7: '#5f8f5f',
+      pieStrokeColor: cssVar('--color-border-weak', border),
+      pieOuterStrokeColor: cssVar('--color-border-weak', border),
+      attributeBackgroundColorOdd: cssVar('--color-bg-weak', bg),
+      attributeBackgroundColorEven: cssVar('--color-bg', dark ? '#0a0a0a' : '#fcfcfb'),
+      cScale0: '#e50078',
+      cScale1: '#2f8f2f',
+      cScale2: '#3f6fc9',
+      cScale3: '#c98a2f',
+      cScale4: '#8f3f9f',
+      cScale5: '#9f3f6f',
+      cScale6: '#5f8f5f',
+      cScale7: '#6f8fc9',
+      cScale8: '#b35f1f',
+      cScale9: '#3f9f9f',
+      cScale10: '#9f8f3f',
+      cScale11: '#8f5f9f',
+      git0: '#e50078',
+      git1: '#8f3f9f',
+      git2: '#2f8f2f',
+      git3: '#c98a2f',
+      git4: '#3f6fc9',
+      git5: '#9f3f6f',
+      git6: '#5f8f5f',
+      git7: '#6f8fc9',
+      tagLabelBackground: cssVar('--color-bg-interactive', '#e50078'),
+      tagLabelColor: '#ffffff',
+      tagLabelBorder: cssVar('--color-bg-interactive', '#e50078'),
+      tagLabelFontSize: '11px',
+      commitLabelColor: cssVar('--color-text-weak', '#737373'),
+      commitLabelBackground: cssVar('--color-bg', dark ? '#0a0a0a' : '#fcfcfb'),
+      commitLabelFontSize: '11px',
+      errorBkgColor: cssVar('--color-bg-interactive-weak', dark ? '#4a1229' : '#fde3ee'),
+      errorTextColor: cssVar('--color-text-strong', '#0d0d0d'),
+      xyChart: {
+        backgroundColor: bg,
+        titleColor: cssVar('--color-text-strong', '#0d0d0d'),
+        xAxisTitleColor: cssVar('--color-text', '#212121'),
+        xAxisLabelColor: cssVar('--color-text', '#212121'),
+        xAxisTickColor: cssVar('--color-border-weak', border),
+        xAxisLineColor: cssVar('--color-border-weak', border),
+        yAxisTitleColor: cssVar('--color-text', '#212121'),
+        yAxisLabelColor: cssVar('--color-text', '#212121'),
+        yAxisTickColor: cssVar('--color-border-weak', border),
+        yAxisLineColor: cssVar('--color-border-weak', border),
+        plotColorPalette: '#e50078,#2f8f2f,#3f6fc9,#c98a2f,#8f3f9f,#9f3f6f',
+        plotBorderColor: cssVar('--color-border', '#2f8f2f'),
+        legendBackgroundColor: bg,
+        legendTextColor: cssVar('--color-text', '#212121'),
+      },
+    },
+  }
+}
+
+const mermaidSources = new Map()
+
+function fitSvg(svg) {
+  if (!svg) return
+  let bbox
+  try {
+    bbox = svg.getBBox()
+  } catch {
+    return
+  }
+  if (!bbox || !bbox.width || !bbox.height) return
+  const pad = 10
+  const x = bbox.x - pad
+  const y = bbox.y - pad
+  const w = bbox.width + pad * 2
+  const h = bbox.height + pad * 2
+  svg.setAttribute('width', w)
+  svg.setAttribute('height', h)
+  svg.setAttribute('viewBox', `${x} ${y} ${w} ${h}`)
+}
+
+function translateParts(t) {
+  const m = /translate\(\s*([\d.-]+)\s*,\s*([\d.-]+)/.exec(t || '')
+  return m ? { x: parseFloat(m[1]), y: parseFloat(m[2]) } : null
+}
+
+function fixXyChart(svg) {
+  const leftTitle = svg.querySelector('g.left-axis > g.title text')
+  const leftLabels = svg.querySelector('g.left-axis > g.label')
+  if (leftTitle && leftLabels) {
+    try {
+      const lb = leftLabels.getBBox()
+      if (lb.width) {
+        const tp = translateParts(leftTitle.getAttribute('transform'))
+        if (tp) {
+          const fontSize = parseFloat(leftTitle.getAttribute('font-size')) || 14
+          const nx = lb.x - 10 - fontSize
+          leftTitle.setAttribute('transform', `translate(${nx}, ${tp.y}) rotate(270)`)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  const bottomTitle = svg.querySelector('g.bottom-axis > g.title text')
+  const bottomLabels = svg.querySelector('g.bottom-axis > g.label')
+  if (bottomTitle && bottomLabels) {
+    try {
+      const lb = bottomLabels.getBBox()
+      if (lb.height) {
+        const tp = translateParts(bottomTitle.getAttribute('transform'))
+        if (tp) {
+          const ny = lb.y + lb.height + 8
+          bottomTitle.setAttribute('transform', `translate(${tp.x}, ${ny})`)
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function postProcessSvg(svg) {
+  if (!svg) return
+  fixXyChart(svg)
+  fitSvg(svg)
+  svg.removeAttribute('style')
+}
+
+mermaid.initialize(mermaidTheme())
 
 function renderMermaid(el) {
   const nodes = el.querySelectorAll('div.mermaid')
   if (!nodes.length) return
+  const fresh = []
+  for (const node of nodes) {
+    if (node.querySelector('svg')) continue
+    const src = node.textContent
+    if (!src) continue
+    mermaidSources.set(node, src)
+    fresh.push(node)
+  }
+  if (!fresh.length) return
   try {
-    mermaid.run({ nodes: Array.from(nodes) }).catch(() => {})
+    mermaid.run({ nodes: fresh })
+      .then(() => fresh.forEach((node) => postProcessSvg(node.querySelector('svg'))))
+      .catch(() => {})
   } catch {
     /* ignore */
   }
 }
+
+function rerenderMermaid() {
+  mermaid.initialize(mermaidTheme())
+  const nodes = Array.from(mermaidSources.keys()).filter((n) => n.isConnected)
+  if (!nodes.length) return
+  for (const node of nodes) {
+    node.textContent = mermaidSources.get(node)
+  }
+  try {
+    mermaid.run({ nodes })
+      .then(() => nodes.forEach((node) => postProcessSvg(node.querySelector('svg'))))
+      .catch(() => {})
+  } catch {
+    /* ignore */
+  }
+}
+
+const mermaidThemeObserver = new MutationObserver(rerenderMermaid)
+mermaidThemeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+
+document.addEventListener('click', (e) => {
+  if (mermaidModal.isOpen()) return
+  const svg = e.target.closest('svg')
+  if (!svg || !svg.closest('.mermaid')) return
+  mermaidModal.open(svg)
+})
 
 export function highlight(el) {
   el.querySelectorAll('pre code').forEach((block) => {
