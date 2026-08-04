@@ -7,6 +7,7 @@ use crate::context::AppContext;
 use crate::components::header::site_header;
 use crate::components::footer::site_footer;
 use crate::components::owner_chat::owner_chat;
+use crate::components::whiteboard_panel::whiteboard_panel;
 use crate::seo;
 use topcoat::asset::asset;
 
@@ -83,6 +84,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                     site_footer()
                 </div>
                 owner_chat()
+                whiteboard_panel()
                 <script type="application/json" id="landing-data">(serde_json::to_string(&ctx.landing).unwrap_or_default())</script>
                 <script type="application/json" id="settings-data">(serde_json::to_string(&ctx.settings).unwrap_or_default())</script>
                 <script type="importmap">{ (Unescaped::new_unchecked(r#"{"imports":{"marked":"https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.esm.js","highlight.js":"https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js"}}"#)) }</script>

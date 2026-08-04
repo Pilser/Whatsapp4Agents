@@ -11,6 +11,7 @@ members = [
     "zw-cache",
     "zw-mcp",
     "zw-channels",
+    "zw-whiteboard",
     "crates/mcp-web-files-render",
     "crates/ch-web-ui",
 ]
@@ -21,6 +22,7 @@ zw-db = { path = "zw-db" }
 zw-cache = { path = "zw-cache" }
 zw-mcp = { path = "zw-mcp" }
 zw-channels = { path = "zw-channels" }
+zw-whiteboard = { path = "zw-whiteboard" }
 mcp-web-files-render = { path = "crates/mcp-web-files-render" }
 ch-web-ui = { path = "crates/ch-web-ui" }
 tokio = { workspace = true }

@@ -13,8 +13,9 @@ pub async fn ws(cx: &Cx, upgrade: WebSocketUpgrade) -> Result<Response> {
     let registry = ctx.registry.clone();
     let zeroclaw = ctx.zeroclaw.clone();
     let agent = Arc::new(ctx.agent.clone());
+    let whiteboard = ctx.whiteboard().cloned();
 
     upgrade.on_upgrade(move |socket| async move {
-        handle_ws_connection(socket, registry, zeroclaw, agent).await;
+        handle_ws_connection(socket, registry, zeroclaw, agent, whiteboard).await;
     })
 }

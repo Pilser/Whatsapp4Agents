@@ -405,6 +405,7 @@ dependencies = [
  "zw-cache",
  "zw-core",
  "zw-db",
+ "zw-whiteboard",
 ]
 
 [[package]]
@@ -4280,6 +4281,7 @@ dependencies = [
  "zw-core",
  "zw-db",
  "zw-mcp",
+ "zw-whiteboard",
 ]
 
 [[package]]
@@ -4307,6 +4309,7 @@ dependencies = [
  "uuid",
  "zw-core",
  "zw-db",
+ "zw-whiteboard",
 ]
 
 [[package]]
@@ -4352,4 +4355,17 @@ dependencies = [
  "tokio",
  "tracing",
  "zw-core",
+]
+
+[[package]]
+name = "zw-whiteboard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mime_guess",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zw-cache",
 ]

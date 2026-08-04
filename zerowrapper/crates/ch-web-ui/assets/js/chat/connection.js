@@ -4,6 +4,7 @@ import { state as authState, saveToStorage } from './auth.js'
 import { fetchHistory, addMessage, abortHistoryFetch } from './messages.js'
 import * as streaming from './streaming.js'
 import * as toolCalls from './tool-calls.js'
+import * as whiteboard from './whiteboard.js'
 
 export let onStateChange = null
 export function setOnStateChange(cb) { onStateChange = cb }
@@ -38,6 +39,11 @@ function handleMessage(e) {
           authState.sessionId = data.session_id
           saveToStorage()
         }
+        whiteboard.setSession(data.session_id)
+        break
+      case 'whiteboard_update':
+        if (data.session_id) whiteboard.setSession(data.session_id)
+        whiteboard.setBoard(data)
         break
       case 'thinking':
         streaming.handleThinking(data.content)
@@ -78,6 +84,8 @@ export function connect() {
   network.connect(url, {
     onOpen: () => {
       fetchHistory()
+      whiteboard.setSession(authState.sessionId)
+      whiteboard.sync()
     },
     onMessage: handleMessage,
     onClose: (e) => {

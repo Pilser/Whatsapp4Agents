@@ -4,16 +4,58 @@ use tokio::sync::mpsc;
 use topcoat::router::content::websocket::{Message, WebSocket};
 use zw_core::{ChannelMessage, ChannelRegistryHandle, ZeroClawHandle, StreamEvent};
 
+fn spawn_whiteboard_forwarding(
+    ws_sender: &Arc<tokio::sync::Mutex<futures_util::stream::SplitSink<WebSocket, Message>>>,
+    handle: zw_whiteboard::WhiteboardHandle,
+    session_id: String,
+    spawned: &mut Option<String>,
+) {
+    if spawned.as_deref() == Some(session_id.as_str()) {
+        return;
+    }
+    *spawned = Some(session_id.clone());
+    let ws = ws_sender.clone();
+    tokio::spawn(async move {
+        let mut rx = handle.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(zw_whiteboard::WhiteboardEvent::WhiteboardUpdate {
+                    session_id: sid,
+                    board,
+                }) => {
+                    if sid != session_id {
+                        continue;
+                    }
+                    let flat = serde_json::json!({
+                        "type": "whiteboard_update",
+                        "session_id": sid,
+                        "body_md": board.body_md,
+                        "pins": board.pins,
+                    });
+                    let mut sender = ws.lock().await;
+                    if sender.send(Message::Text(flat.to_string().into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
 pub async fn handle_ws_connection(
     socket: WebSocket,
     registry: ChannelRegistryHandle,
     zeroclaw: Arc<ZeroClawHandle>,
     agent: Arc<String>,
+    whiteboard: Option<zw_whiteboard::WhiteboardHandle>,
 ) {
     let (ws_sender, mut ws_receiver) = socket.split();
     let ws_sender = Arc::new(tokio::sync::Mutex::new(ws_sender));
 
     let mut current_session_id = String::new();
+    let mut whiteboard_forwarding_for: Option<String> = None;
 
     while let Some(msg) = ws_receiver.next().await {
         let text = match msg {
@@ -54,6 +96,38 @@ pub async fn handle_ws_connection(
             continue;
         }
 
+        if parsed.get("type").and_then(|v| v.as_str()) == Some("whiteboard_sync") {
+            let sid = parsed.get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !sid.is_empty() {
+                current_session_id = sid.clone();
+                if let Some(handle) = whiteboard.clone() {
+                    if let Err(e) = handle.ensure(&sid).await {
+                        tracing::warn!("whiteboard ensure on sync failed: {}", e);
+                    }
+                    spawn_whiteboard_forwarding(&ws_sender, handle, sid.clone(), &mut whiteboard_forwarding_for);
+                }
+                let (body_md, pins) = match &whiteboard {
+                    Some(handle) => match handle.latest(&sid).await {
+                        Some(board) => (board.body_md, board.pins),
+                        None => (String::new(), Vec::new()),
+                    },
+                    None => (String::new(), Vec::new()),
+                };
+                let flat = serde_json::json!({
+                    "type": "whiteboard_update",
+                    "session_id": sid,
+                    "body_md": body_md,
+                    "pins": pins,
+                });
+                let mut sender = ws_sender.lock().await;
+                let _ = sender.send(Message::Text(flat.to_string().into())).await;
+            }
+            continue;
+        }
+
         let session_id = parsed.get("session_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
@@ -79,6 +153,9 @@ pub async fn handle_ws_connection(
         };
 
         current_session_id = session_id;
+        if let Some(handle) = whiteboard.clone() {
+            spawn_whiteboard_forwarding(&ws_sender, handle, current_session_id.clone(), &mut whiteboard_forwarding_for);
+        }
         let (event_tx, mut event_rx) = mpsc::channel::<StreamEvent>(256);
         let ws = ws_sender.clone();
         let registry = registry.clone();

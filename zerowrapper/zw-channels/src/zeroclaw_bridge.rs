@@ -11,6 +11,7 @@ pub struct ZeroClawBridge {
     cmd_tx: tokio::sync::mpsc::Sender<ZeroClawCommand>,
     cmd_rx: Option<tokio::sync::mpsc::Receiver<ZeroClawCommand>>,
     db: DbPool,
+    whiteboard: Option<zw_whiteboard::WhiteboardHandle>,
 }
 
 impl Clone for ZeroClawBridge {
@@ -20,6 +21,7 @@ impl Clone for ZeroClawBridge {
             cmd_tx: self.cmd_tx.clone(),
             cmd_rx: None,
             db: self.db.clone(),
+            whiteboard: self.whiteboard.clone(),
         }
     }
 }
@@ -38,7 +40,12 @@ impl ZeroClawBridge {
             cmd_tx,
             cmd_rx: Some(cmd_rx),
             db,
+            whiteboard: None,
         }
+    }
+
+    pub fn set_whiteboard(&mut self, handle: zw_whiteboard::WhiteboardHandle) {
+        self.whiteboard = Some(handle);
     }
 
     pub fn handle(&self) -> ZeroClawHandle {
@@ -150,6 +157,11 @@ impl ZeroClawBridge {
     pub async fn process_prompt(&self, session_id: &str, user_id: &str, agent_alias: &str, channel: &str, role: &str, attachments: &[zw_core::Attachment], prompt: &str) -> anyhow::Result<String> {
         let mut conn = self.connect().await?;
         let actual_session_id = conn.new_session(session_id, agent_alias).await?;
+        if let Some(wb) = &self.whiteboard {
+            if let Err(e) = wb.ensure(&actual_session_id).await {
+                tracing::warn!("whiteboard ensure failed: {}", e);
+            }
+        }
         if let Err(e) = self.db.upsert_session(&actual_session_id, user_id, agent_alias, None, None, "web").await {
             tracing::warn!("Failed to save session to DB: {}", e);
         }
@@ -172,6 +184,12 @@ impl ZeroClawBridge {
         let actual_session_id = conn.new_session(session_id, agent_alias).await?;
 
         let _ = event_tx.send(StreamEvent::SessionCreated { session_id: actual_session_id.clone() }).await;
+
+        if let Some(wb) = &self.whiteboard {
+            if let Err(e) = wb.ensure(&actual_session_id).await {
+                tracing::warn!("whiteboard ensure failed: {}", e);
+            }
+        }
 
         if let Err(e) = self.db.upsert_session(&actual_session_id, user_id, agent_alias, None, None, "web").await {
             tracing::warn!("Failed to save session to DB: {}", e);

@@ -2,6 +2,7 @@ import * as network from './network.js'
 import { marked } from 'marked'
 import { render as renderMarkdown } from './markdown.js'
 import { USER_AVATAR, BOT_AVATAR, escapeHtml } from './constants.js'
+import * as whiteboard from './whiteboard.js'
 
 export const state = {
   sessionId: '',
@@ -297,6 +298,7 @@ function ownerFetchHistory() {
     .then(data => {
       if (data.session_id) {
         state.sessionId = data.session_id
+        whiteboard.setSession(data.session_id)
       }
       if (!data.messages || data.messages.length === 0) return
       const container = getContainer()
@@ -339,6 +341,8 @@ export function connectOwnerWs() {
       const btn = getEl('owner-refresh-btn')
       if (btn) btn.classList.add('hidden')
       ownerFetchHistory()
+      whiteboard.setSession(state.sessionId)
+      whiteboard.sync()
     },
     onMessage: (e) => {
       try {
@@ -346,6 +350,11 @@ export function connectOwnerWs() {
         switch (data.type) {
           case 'session_created':
             if (data.session_id && data.session_id !== state.sessionId) state.sessionId = data.session_id
+            whiteboard.setSession(data.session_id)
+            break
+          case 'whiteboard_update':
+            if (data.session_id) whiteboard.setSession(data.session_id)
+            whiteboard.setBoard(data)
             break
           case 'thinking':
             handleThinking(data.content)

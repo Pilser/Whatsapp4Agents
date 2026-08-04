@@ -554,6 +554,222 @@ function clearPending() {
   pending = [];
 }
 
+// whiteboard-render.js
+import { marked as marked3 } from "marked";
+function humanSize(bytes) {
+  if (bytes === undefined || bytes === null)
+    return "";
+  if (bytes < 1024)
+    return bytes + " B";
+  const units = ["KB", "MB", "GB", "TB"];
+  let n = bytes;
+  let i = -1;
+  do {
+    n /= 1024;
+    i++;
+  } while (n >= 1024 && i < units.length - 1);
+  return n.toFixed(1) + " " + units[i];
+}
+function renderBody(container, bodyMd) {
+  if (!container)
+    return;
+  container.classList.add("chat-markdown");
+  if (!bodyMd || !bodyMd.trim()) {
+    container.innerHTML = "";
+    return;
+  }
+  render(container, marked3.parse(bodyMd));
+}
+function buildCard(pin) {
+  const card = document.createElement("div");
+  card.className = "whiteboard-pin-card";
+  const title = document.createElement("div");
+  title.className = "pin-name";
+  title.textContent = pin.name || "file";
+  const meta = document.createElement("div");
+  meta.className = "pin-meta";
+  meta.textContent = (pin.mime || "file") + (pin.size ? " · " + humanSize(pin.size) : "");
+  card.appendChild(title);
+  card.appendChild(meta);
+  return card;
+}
+function renderPins(container, pins) {
+  if (!container)
+    return;
+  container.innerHTML = "";
+  if (!pins || pins.length === 0)
+    return;
+  const frag = document.createDocumentFragment();
+  pins.forEach((pin) => {
+    const url2 = pin.url || "#";
+    const mime = (pin.mime || "").toLowerCase();
+    const name = pin.name || "file";
+    const card = buildCard(pin);
+    if (mime.startsWith("image/")) {
+      const img = document.createElement("img");
+      img.src = url2;
+      img.alt = name;
+      img.loading = "lazy";
+      card.appendChild(img);
+    } else if (mime === "application/pdf") {
+      const frame = document.createElement("iframe");
+      frame.src = url2;
+      frame.title = name;
+      card.appendChild(frame);
+    } else if (mime.startsWith("text/")) {
+      const pre = document.createElement("pre");
+      pre.textContent = "Loading…";
+      card.appendChild(pre);
+      fetch(url2).then((r) => r.ok ? r.text() : Promise.reject(new Error("fetch failed"))).then((text) => {
+        pre.textContent = text;
+      }).catch(() => {
+        pre.textContent = "";
+      });
+    } else {
+      const link = document.createElement("a");
+      link.href = url2;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.textContent = "Download " + name;
+      card.appendChild(link);
+    }
+    frag.appendChild(card);
+  });
+  container.appendChild(frag);
+}
+function renderBoard(bodyContainer, pinsContainer, board) {
+  renderBody(bodyContainer, board && board.body_md);
+  renderPins(pinsContainer, board && board.pins);
+}
+
+// whiteboard.js
+var SWIPE_THRESHOLD = 40;
+var sessionId = "";
+var mode = "closed";
+var panel = null;
+var body = null;
+var pins = null;
+var down = null;
+var up = null;
+var dragStartY = null;
+var dragging = false;
+function getEl2(id) {
+  return document.getElementById(id);
+}
+function getInputTop() {
+  const input = getEl2("chat-input") || getEl2("owner-chat-input");
+  if (!input)
+    return window.innerHeight * 0.6;
+  return input.getBoundingClientRect().top;
+}
+function applyMode() {
+  if (!panel)
+    return;
+  panel.style.transform = "";
+  panel.classList.remove("wb-closed", "wb-peek", "wb-full");
+  if (mode === "peek") {
+    const offset = -(window.innerHeight - getInputTop());
+    panel.style.setProperty("--wb-peek-offset", offset + "px");
+    panel.classList.add("wb-peek");
+  } else if (mode === "full") {
+    panel.classList.add("wb-full");
+  } else {
+    panel.classList.add("wb-closed");
+  }
+}
+function setMode(next) {
+  if (next === mode)
+    return;
+  mode = next;
+  applyMode();
+}
+function wireButton(btn, onTap) {
+  if (!btn)
+    return;
+  btn.addEventListener("click", (e) => {
+    if (!dragging)
+      onTap();
+  });
+  btn.addEventListener("pointerdown", (e) => {
+    dragStartY = e.clientY;
+    dragging = true;
+    btn.setPointerCapture(e.pointerId);
+  });
+  btn.addEventListener("pointermove", (e) => {
+    if (!dragging || dragStartY === null)
+      return;
+    const dy = e.clientY - dragStartY;
+    if (dy > 0 && mode === "closed") {
+      panel.style.transform = `translateY(${Math.min(dy, 120)}px)`;
+    } else if (dy < 0 && mode === "full") {
+      panel.style.transform = `translateY(${Math.max(dy, -120)}px)`;
+    }
+  });
+  const endDrag = (e) => {
+    if (!dragging)
+      return;
+    const dy = e.clientY - dragStartY;
+    dragStartY = null;
+    dragging = false;
+    panel.style.transition = "";
+    if (dy > SWIPE_THRESHOLD && mode === "closed") {
+      setMode("peek");
+    } else if (dy < -SWIPE_THRESHOLD && mode === "full") {
+      setMode("peek");
+    } else {
+      applyMode();
+    }
+  };
+  btn.addEventListener("pointerup", endDrag);
+  btn.addEventListener("pointercancel", endDrag);
+}
+function init2() {
+  panel = getEl2("whiteboard-panel");
+  body = getEl2("whiteboard-body");
+  pins = getEl2("whiteboard-pins");
+  down = getEl2("whiteboard-down");
+  up = getEl2("whiteboard-up");
+  if (!panel)
+    return;
+  wireButton(down, () => {
+    if (mode === "closed")
+      setMode("peek");
+    else
+      setMode("full");
+  });
+  wireButton(up, () => {
+    if (mode === "full")
+      setMode("peek");
+    else
+      setMode("closed");
+  });
+  window.addEventListener("resize", () => {
+    if (mode === "peek")
+      applyMode();
+  });
+  applyMode();
+}
+function sync() {
+  if (!sessionId)
+    return;
+  send(JSON.stringify({ type: "whiteboard_sync", session_id: sessionId }));
+}
+function setSession(sid) {
+  if (!sid)
+    return;
+  if (sid !== sessionId) {
+    sessionId = sid;
+    sync();
+  }
+}
+function setBoard(data) {
+  if (!data)
+    return;
+  if (data.session_id)
+    sessionId = data.session_id;
+  renderBoard(body, pins, data);
+}
+
 // connection.js
 var onStateChange = null;
 function setHint(state3) {
@@ -589,6 +805,12 @@ function handleMessage(e) {
           state2.sessionId = data.session_id;
           saveToStorage();
         }
+        setSession(data.session_id);
+        break;
+      case "whiteboard_update":
+        if (data.session_id)
+          setSession(data.session_id);
+        setBoard(data);
         break;
       case "thinking":
         handleThinking(data.content);
@@ -629,6 +851,8 @@ function connect2() {
   connect(url2, {
     onOpen: () => {
       fetchHistory();
+      setSession(state2.sessionId);
+      sync();
     },
     onMessage: handleMessage,
     onClose: (e) => {
@@ -770,7 +994,7 @@ function updateNavButtons() {
   if (next)
     next.style.display = currentIndex >= images.length - 1 ? "none" : "flex";
 }
-function init2(messagesEl) {
+function init3(messagesEl) {
   messagesEl.addEventListener("click", (e) => {
     if (e.target.tagName === "IMG" && e.target.closest(".chat-markdown")) {
       const container = e.target.closest(".chat-markdown");
@@ -831,7 +1055,7 @@ function formatSize(bytes) {
 }
 
 // owner-chat.js
-import { marked as marked3 } from "marked";
+import { marked as marked4 } from "marked";
 var state3 = {
   sessionId: "",
   phone: "",
@@ -843,26 +1067,26 @@ var onFinalize2 = null;
 var typingTimer = null;
 var pendingToolCalls = new Map;
 var activeThought2 = null;
-function getEl2(id) {
+function getEl3(id) {
   return document.getElementById(id);
 }
 function getContainer() {
-  return getEl2("owner-messages");
+  return getEl3("owner-messages");
 }
 function getTyping() {
-  return getEl2("owner-typing");
+  return getEl3("owner-typing");
 }
 function getHint() {
-  return getEl2("owner-hint");
+  return getEl3("owner-hint");
 }
 function showOwnerDisconnected() {
   const hint = getHint();
   if (!hint)
     return;
-  const p = getEl2("owner-hint-text");
+  const p = getEl3("owner-hint-text");
   if (p)
     p.textContent = "Backend not connected. Check your connection and refresh.";
-  const btn = getEl2("owner-refresh-btn");
+  const btn = getEl3("owner-refresh-btn");
   if (btn)
     btn.classList.remove("hidden");
   hint.style.display = "flex";
@@ -937,7 +1161,7 @@ function buildMessageRow2(role, text) {
     row.appendChild(avatar);
     const content2 = document.createElement("div");
     content2.className = "msg-content chat-markdown";
-    render(content2, marked3.parse(text || ""));
+    render(content2, marked4.parse(text || ""));
     row.appendChild(content2);
   }
   return row;
@@ -991,7 +1215,7 @@ function finalizeStreaming() {
       row.appendChild(avatar);
       const content2 = document.createElement("div");
       content2.className = "msg-content chat-markdown";
-      render(content2, marked3.parse(text.trim()));
+      render(content2, marked4.parse(text.trim()));
       row.appendChild(content2);
       if (container) {
         container.appendChild(row);
@@ -1067,7 +1291,7 @@ function handleChunk2(content2) {
   streamingContent += content2;
   const contentDiv = streamingEl.querySelector(".msg-content");
   if (contentDiv) {
-    render(contentDiv, marked3.parse(streamingContent));
+    render(contentDiv, marked4.parse(streamingContent));
   }
 }
 function handleDone2(content2) {
@@ -1140,6 +1364,7 @@ function ownerFetchHistory() {
   fetch(url2).then((r) => r.json()).then((data) => {
     if (data.session_id) {
       state3.sessionId = data.session_id;
+      setSession(data.session_id);
     }
     if (!data.messages || data.messages.length === 0)
       return;
@@ -1167,7 +1392,7 @@ function connectOwnerWs() {
     disconnect();
   resetStreaming();
   pendingToolCalls.clear();
-  const refreshBtn = getEl2("owner-refresh-btn");
+  const refreshBtn = getEl3("owner-refresh-btn");
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => location.reload());
   }
@@ -1178,13 +1403,15 @@ function connectOwnerWs() {
       const hint = getHint();
       if (hint)
         hint.style.display = "none";
-      const p = getEl2("owner-hint-text");
+      const p = getEl3("owner-hint-text");
       if (p)
         p.textContent = "Connected. Send a message to start.";
-      const btn = getEl2("owner-refresh-btn");
+      const btn = getEl3("owner-refresh-btn");
       if (btn)
         btn.classList.add("hidden");
       ownerFetchHistory();
+      setSession(state3.sessionId);
+      sync();
     },
     onMessage: (e) => {
       try {
@@ -1193,6 +1420,12 @@ function connectOwnerWs() {
           case "session_created":
             if (data.session_id && data.session_id !== state3.sessionId)
               state3.sessionId = data.session_id;
+            setSession(data.session_id);
+            break;
+          case "whiteboard_update":
+            if (data.session_id)
+              setSession(data.session_id);
+            setBoard(data);
             break;
           case "thinking":
             handleThinking2(data.content);
@@ -1285,7 +1518,7 @@ function clearFromStorage2() {
   localStorage.removeItem(STORAGE_ROLE);
   localStorage.removeItem(STORAGE_SESSION2);
 }
-function init3() {
+function init4() {
   document.getElementById("owner-btn")?.addEventListener("click", showLogin);
   document.getElementById("owner-btn-mobile")?.addEventListener("click", showLogin);
   document.getElementById("owner-login-close")?.addEventListener("click", hideLogin);
@@ -1485,17 +1718,17 @@ function logPendingResources() {
   const fonts = document.fonts ? document.fonts.status : "n/a";
   console.log("[resources] readyState:", document.readyState, "fonts:", fonts);
 }
-function init4() {
+function init5() {
   init();
   logPendingResources();
   setTimeout(logPendingResources, 3000);
-  init3();
+  init4();
   if (els.chatRefreshBtn) {
     els.chatRefreshBtn.addEventListener("click", () => location.reload());
   }
   if (!els.form)
     return;
-  init2(els.messages);
+  init3(els.messages);
   loadFromStorage();
   if (state2.phone) {
     showBadge();
@@ -1627,4 +1860,5 @@ function autoGrow2() {
 }
 
 // app-entry.js
-init4();
+init5();
+init2();

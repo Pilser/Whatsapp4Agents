@@ -15,6 +15,7 @@ pub struct AppContext {
     pub config_dir: std::path::PathBuf,
     pub settings: SiteSettings,
     pub landing: LandingData,
+    pub whiteboard: Option<zw_whiteboard::WhiteboardHandle>,
 }
 
 impl AppContext {
@@ -39,6 +40,16 @@ impl AppContext {
             config_dir,
             settings,
             landing,
+            whiteboard: None,
         }
+    }
+
+    pub fn with_whiteboard(mut self, handle: zw_whiteboard::WhiteboardHandle) -> Self {
+        self.whiteboard = Some(handle);
+        self
+    }
+
+    pub fn whiteboard(&self) -> Option<&zw_whiteboard::WhiteboardHandle> {
+        self.whiteboard.as_ref()
     }
 }

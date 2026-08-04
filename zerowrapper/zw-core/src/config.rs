@@ -40,6 +40,9 @@ pub struct WebChannelConfig {
     /// Directory for file uploads
     #[serde(default = "default_upload_dir")]
     pub upload_dir: PathBuf,
+    /// Directory for session whiteboard files (defaults to {AGENTS_DIR}/{agent}/workspace)
+    #[serde(default)]
+    pub whiteboard_dir: Option<PathBuf>,
 }
 
 impl WebChannelConfig {
@@ -100,6 +103,7 @@ impl Default for WrapperConfig {
                 ui_bind: None,
                 accounts: HashMap::new(),
                 upload_dir: default_upload_dir(),
+                whiteboard_dir: None,
             },
             mcp: None,
         }
@@ -220,6 +224,9 @@ impl WrapperConfig {
                             }
                             ("upload_dir", toml::Value::String(v)) => {
                                 base.ch_web.upload_dir = PathBuf::from(v);
+                            }
+                            ("whiteboard_dir", toml::Value::String(v)) => {
+                                base.ch_web.whiteboard_dir = Some(PathBuf::from(v));
                             }
                             ("accounts", val) => {
                                 if let Ok(accts) = val.clone().try_into::<HashMap<String, AccountConfig>>() {

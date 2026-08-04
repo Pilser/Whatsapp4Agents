@@ -34,6 +34,15 @@ async fn main() -> anyhow::Result<()> {
     let config = zw_core::WrapperConfig::load()?;
     let cache = Arc::new(zw_cache::CacheManager::new(&config.cache_dir));
 
+    let whiteboard_dir = config.ch_web.whiteboard_dir.clone().unwrap_or_else(|| {
+        let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents".into());
+        std::path::PathBuf::from(agents_dir).join(&config.ch_web.agent).join("workspace")
+    });
+    tracing::info!("whiteboard dir: {}", whiteboard_dir.display());
+
+    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500));
+    let _wb_task = whiteboard.spawn();
+
     let mcp = zw_mcp::McpRegistry::new();
     mcp.register_provider(Box::new(
         mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
@@ -60,7 +69,8 @@ async fn main() -> anyhow::Result<()> {
         db.seed_accounts(&seeds).await?;
     }
 
-    let zeroclaw = zw_channels::ZeroClawBridge::new(&config.zeroclaw_socket, db.clone());
+    let mut zeroclaw = zw_channels::ZeroClawBridge::new(&config.zeroclaw_socket, db.clone());
+    zeroclaw.set_whiteboard(whiteboard.clone());
     let channels = zw_channels::ChannelRegistry::new(zeroclaw.clone());
 
     let primary_bind = config.ch_web.bind.clone();
@@ -124,7 +134,8 @@ async fn main() -> anyhow::Result<()> {
         config_dir,
         settings,
         landing,
-    );
+    )
+    .with_whiteboard(whiteboard.clone());
     let ui_handle = tokio::spawn(async move {
         if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);
