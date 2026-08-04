@@ -224,7 +224,6 @@
 
   .whiteboard-arrow {
     position: fixed;
-    bottom: 46px;
     z-index: 70;
     width: 34px;
     height: 34px;
@@ -239,8 +238,6 @@
     justify-content: center;
     transition: background 0.2s, transform 0.15s ease;
   }
-  #whiteboard-down { right: calc(50% + 6px); }
-  #whiteboard-up { right: calc(50% - 40px); }
   .whiteboard-arrow:hover { background: var(--color-bg-weak-hover); }
   .whiteboard-arrow:active { transform: scale(0.94); }
   .whiteboard-arrow svg { width: 18px; height: 18px; }
@@ -262,7 +259,10 @@
     border-bottom: 1px solid var(--color-border-weak);
   }
   .whiteboard-panel.wb-closed { display: none; }
-  .whiteboard-panel.wb-peek { display: flex; transform: translateY(var(--wb-peek-offset, -50vh)); }
+  .whiteboard-panel.wb-peek {
+    display: flex;
+    transform: translateY(var(--wb-peek-offset, -60vh));
+  }
   .whiteboard-panel.wb-full { display: flex; transform: translateY(0); }
 
   #whiteboard-grip {
@@ -363,5 +363,20 @@
     font-weight: 600;
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+  .math-block {
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    padding: 4px 0;
+  }
+  .math-block .katex-display { margin: 0; }
+  .chat-markdown .mermaid,
+  #whiteboard-body .mermaid {
+    overflow-x: auto;
+    margin: 0.75rem 0;
+    padding: 8px;
+    border: 1px solid var(--color-border-weak);
+    border-radius: 8px;
+    background: var(--color-bg-weak);
   }
 }

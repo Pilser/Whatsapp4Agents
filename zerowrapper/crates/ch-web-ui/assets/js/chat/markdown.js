@@ -1,4 +1,75 @@
 import hljs from 'highlight.js'
+import { marked } from 'marked'
+import katex from 'katex'
+import mermaid from 'mermaid'
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+marked.use({
+  extensions: [
+    {
+      name: 'mathBlock',
+      level: 'block',
+      start(src) { return src.indexOf('$$') },
+      tokenizer(src) {
+        const match = /^\$\$([\s\S]+?)\$\$\n?/.exec(src)
+        if (!match) return undefined
+        return { type: 'mathBlock', raw: match[0], text: match[1] }
+      },
+      renderer(token) {
+        try {
+          return `<div class="math-block">${katex.renderToString(token.text, { displayMode: true, throwOnError: false })}</div>`
+        } catch {
+          return `<div class="math-block">${escapeHtml(token.text)}</div>`
+        }
+      },
+    },
+    {
+      name: 'mathInline',
+      level: 'inline',
+      start(src) { return src.indexOf('$') },
+      tokenizer(src) {
+        const match = /^\$([^\s$][^$\n]*[^\s$])\$/.exec(src)
+        if (!match) return undefined
+        return { type: 'mathInline', raw: match[0], text: match[1] }
+      },
+      renderer(token) {
+        try {
+          return katex.renderToString(token.text, { displayMode: false, throwOnError: false })
+        } catch {
+          return escapeHtml(token.text)
+        }
+      },
+    },
+    {
+      name: 'mermaid',
+      level: 'block',
+      start(src) { return src.indexOf('```mermaid') },
+      tokenizer(src) {
+        const match = /^```mermaid\s*\n([\s\S]*?)```/.exec(src)
+        if (!match) return undefined
+        return { type: 'mermaid', raw: match[0], text: match[1] }
+      },
+      renderer(token) {
+        return `<div class="mermaid">${escapeHtml(token.text)}</div>`
+      },
+    },
+  ],
+})
+
+mermaid.initialize({ startOnLoad: false, theme: 'base' })
+
+function renderMermaid(el) {
+  const nodes = el.querySelectorAll('div.mermaid')
+  if (!nodes.length) return
+  try {
+    mermaid.run({ nodes: Array.from(nodes) }).catch(() => {})
+  } catch {
+    /* ignore */
+  }
+}
 
 export function highlight(el) {
   el.querySelectorAll('pre code').forEach((block) => {
@@ -61,4 +132,5 @@ export function render(el, html) {
   el.innerHTML = html
   wrapTables(el)
   highlight(el)
+  renderMermaid(el)
 }

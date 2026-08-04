@@ -42,6 +42,46 @@ function setMode(next) {
   applyMode()
 }
 
+function cycleDown() {
+  if (mode === 'closed') setMode('peek')
+  else if (mode === 'peek') setMode('full')
+}
+
+function cycleUp() {
+  if (mode === 'full') setMode('peek')
+  else if (mode === 'peek') setMode('closed')
+}
+
+function activeInput() {
+  const input = getEl('chat-input') || getEl('owner-chat-input')
+  if (!input) return null
+  const r = input.getBoundingClientRect()
+  if (r.width > 0 && r.height > 0) return input
+  const other = input.id === 'chat-input' ? getEl('owner-chat-input') : getEl('chat-input')
+  if (other) {
+    const r2 = other.getBoundingClientRect()
+    if (r2.width > 0 && r2.height > 0) return other
+  }
+  return input
+}
+
+function positionArrows() {
+  if (!down || !up) return
+  const input = activeInput()
+  if (!input) return
+  const r = input.getBoundingClientRect()
+  const cx = r.left + r.width / 2 + 55
+  const top = r.top - 48
+  const pos = (btn, x) => {
+    btn.style.left = (cx + x) + 'px'
+    btn.style.top = top + 'px'
+    btn.style.right = 'auto'
+    btn.style.bottom = 'auto'
+  }
+  pos(down, -40)
+  pos(up, 6)
+}
+
 function wireButton(btn, onTap) {
   if (!btn) return
   btn.addEventListener('click', (e) => {
@@ -53,27 +93,19 @@ function wireButton(btn, onTap) {
     btn.setPointerCapture(e.pointerId)
   })
   btn.addEventListener('pointermove', (e) => {
-    if (!dragging || dragStartY === null) return
+    if (!dragging || dragStartY === null || !panel) return
     const dy = e.clientY - dragStartY
-    if (dy > 0 && mode === 'closed') {
-      panel.style.transform = `translateY(${Math.min(dy, 120)}px)`
-    } else if (dy < 0 && mode === 'full') {
-      panel.style.transform = `translateY(${Math.max(dy, -120)}px)`
-    }
+    if (mode === 'closed') panel.style.transform = `translateY(${Math.min(dy, 120)}px)`
+    else if (mode === 'full') panel.style.transform = `translateY(${Math.max(dy, -120)}px)`
   })
   const endDrag = (e) => {
     if (!dragging) return
     const dy = e.clientY - dragStartY
     dragStartY = null
     dragging = false
-    panel.style.transition = ''
-    if (dy > SWIPE_THRESHOLD && mode === 'closed') {
-      setMode('peek')
-    } else if (dy < -SWIPE_THRESHOLD && mode === 'full') {
-      setMode('peek')
-    } else {
-      applyMode()
-    }
+    if (dy > SWIPE_THRESHOLD) cycleDown()
+    else if (dy < -SWIPE_THRESHOLD) cycleUp()
+    else applyMode()
   }
   btn.addEventListener('pointerup', endDrag)
   btn.addEventListener('pointercancel', endDrag)
@@ -88,16 +120,16 @@ export function init() {
 
   if (!panel) return
 
-  wireButton(down, () => {
-    if (mode === 'closed') setMode('peek')
-    else setMode('full')
-  })
-  wireButton(up, () => {
-    if (mode === 'full') setMode('peek')
-    else setMode('closed')
-  })
+  wireButton(down, cycleDown)
+  wireButton(up, cycleUp)
 
-  window.addEventListener('resize', () => { if (mode === 'peek') applyMode() })
+  positionArrows()
+  window.addEventListener('resize', positionArrows)
+  window.addEventListener('scroll', positionArrows, { passive: true })
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) positionArrows() })
+  new MutationObserver(positionArrows)
+    .observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] })
+
   applyMode()
 }
 

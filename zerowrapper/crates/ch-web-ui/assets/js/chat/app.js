@@ -197,7 +197,7 @@ function hideAuthError() {
 }
 
 // messages.js
-import { marked as marked2 } from "marked";
+import { marked as marked3 } from "marked";
 
 // constants.js
 var USER_AVATAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
@@ -210,6 +210,81 @@ function escapeHtml(str) {
 
 // markdown.js
 import hljs from "highlight.js";
+import { marked } from "marked";
+import katex from "katex";
+import mermaid from "mermaid";
+function escapeHtml2(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+marked.use({
+  extensions: [
+    {
+      name: "mathBlock",
+      level: "block",
+      start(src) {
+        return src.indexOf("$$");
+      },
+      tokenizer(src) {
+        const match = /^\$\$([\s\S]+?)\$\$\n?/.exec(src);
+        if (!match)
+          return;
+        return { type: "mathBlock", raw: match[0], text: match[1] };
+      },
+      renderer(token) {
+        try {
+          return `<div class="math-block">${katex.renderToString(token.text, { displayMode: true, throwOnError: false })}</div>`;
+        } catch {
+          return `<div class="math-block">${escapeHtml2(token.text)}</div>`;
+        }
+      }
+    },
+    {
+      name: "mathInline",
+      level: "inline",
+      start(src) {
+        return src.indexOf("$");
+      },
+      tokenizer(src) {
+        const match = /^\$([^\s$][^$\n]*[^\s$])\$/.exec(src);
+        if (!match)
+          return;
+        return { type: "mathInline", raw: match[0], text: match[1] };
+      },
+      renderer(token) {
+        try {
+          return katex.renderToString(token.text, { displayMode: false, throwOnError: false });
+        } catch {
+          return escapeHtml2(token.text);
+        }
+      }
+    },
+    {
+      name: "mermaid",
+      level: "block",
+      start(src) {
+        return src.indexOf("```mermaid");
+      },
+      tokenizer(src) {
+        const match = /^```mermaid\s*\n([\s\S]*?)```/.exec(src);
+        if (!match)
+          return;
+        return { type: "mermaid", raw: match[0], text: match[1] };
+      },
+      renderer(token) {
+        return `<div class="mermaid">${escapeHtml2(token.text)}</div>`;
+      }
+    }
+  ]
+});
+mermaid.initialize({ startOnLoad: false, theme: "base" });
+function renderMermaid(el) {
+  const nodes = el.querySelectorAll("div.mermaid");
+  if (!nodes.length)
+    return;
+  try {
+    mermaid.run({ nodes: Array.from(nodes) }).catch(() => {});
+  } catch {}
+}
 function highlight(el) {
   el.querySelectorAll("pre code").forEach((block) => {
     hljs.highlightElement(block);
@@ -267,10 +342,11 @@ function render(el, html) {
   el.innerHTML = html;
   wrapTables(el);
   highlight(el);
+  renderMermaid(el);
 }
 
 // streaming.js
-import { marked } from "marked";
+import { marked as marked2 } from "marked";
 var el = null;
 var content = "";
 var activeThought = null;
@@ -308,7 +384,7 @@ function scheduleRender(id) {
     const target = getEl();
     let html = "";
     if (content) {
-      html += marked.parse(content);
+      html += marked2.parse(content);
     }
     render(target, html);
     target.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -361,7 +437,7 @@ function finalize() {
   const trimmed = content.trim();
   if (trimmed) {
     target.className = "msg-content chat-markdown";
-    render(target, marked.parse(trimmed));
+    render(target, marked2.parse(trimmed));
   }
   el = null;
   content = "";
@@ -447,7 +523,7 @@ function buildMessageRow(role, text) {
     row.appendChild(avatar);
     const content2 = document.createElement("div");
     content2.className = "msg-content chat-markdown";
-    render(content2, marked2.parse(text || ""));
+    render(content2, marked3.parse(text || ""));
     row.appendChild(content2);
   }
   return row;
@@ -555,7 +631,7 @@ function clearPending() {
 }
 
 // whiteboard-render.js
-import { marked as marked3 } from "marked";
+import { marked as marked4 } from "marked";
 function humanSize(bytes) {
   if (bytes === undefined || bytes === null)
     return "";
@@ -578,7 +654,7 @@ function renderBody(container, bodyMd) {
     container.innerHTML = "";
     return;
   }
-  render(container, marked3.parse(bodyMd));
+  render(container, marked4.parse(bodyMd));
 }
 function buildCard(pin) {
   const card = document.createElement("div");
@@ -683,6 +759,51 @@ function setMode(next) {
   mode = next;
   applyMode();
 }
+function cycleDown() {
+  if (mode === "closed")
+    setMode("peek");
+  else if (mode === "peek")
+    setMode("full");
+}
+function cycleUp() {
+  if (mode === "full")
+    setMode("peek");
+  else if (mode === "peek")
+    setMode("closed");
+}
+function activeInput() {
+  const input = getEl2("chat-input") || getEl2("owner-chat-input");
+  if (!input)
+    return null;
+  const r = input.getBoundingClientRect();
+  if (r.width > 0 && r.height > 0)
+    return input;
+  const other = input.id === "chat-input" ? getEl2("owner-chat-input") : getEl2("chat-input");
+  if (other) {
+    const r2 = other.getBoundingClientRect();
+    if (r2.width > 0 && r2.height > 0)
+      return other;
+  }
+  return input;
+}
+function positionArrows() {
+  if (!down || !up)
+    return;
+  const input = activeInput();
+  if (!input)
+    return;
+  const r = input.getBoundingClientRect();
+  const cx = r.left + r.width / 2 + 55;
+  const top = r.top - 48;
+  const pos = (btn, x) => {
+    btn.style.left = cx + x + "px";
+    btn.style.top = top + "px";
+    btn.style.right = "auto";
+    btn.style.bottom = "auto";
+  };
+  pos(down, -40);
+  pos(up, 6);
+}
 function wireButton(btn, onTap) {
   if (!btn)
     return;
@@ -696,14 +817,13 @@ function wireButton(btn, onTap) {
     btn.setPointerCapture(e.pointerId);
   });
   btn.addEventListener("pointermove", (e) => {
-    if (!dragging || dragStartY === null)
+    if (!dragging || dragStartY === null || !panel)
       return;
     const dy = e.clientY - dragStartY;
-    if (dy > 0 && mode === "closed") {
+    if (mode === "closed")
       panel.style.transform = `translateY(${Math.min(dy, 120)}px)`;
-    } else if (dy < 0 && mode === "full") {
+    else if (mode === "full")
       panel.style.transform = `translateY(${Math.max(dy, -120)}px)`;
-    }
   });
   const endDrag = (e) => {
     if (!dragging)
@@ -711,14 +831,12 @@ function wireButton(btn, onTap) {
     const dy = e.clientY - dragStartY;
     dragStartY = null;
     dragging = false;
-    panel.style.transition = "";
-    if (dy > SWIPE_THRESHOLD && mode === "closed") {
-      setMode("peek");
-    } else if (dy < -SWIPE_THRESHOLD && mode === "full") {
-      setMode("peek");
-    } else {
+    if (dy > SWIPE_THRESHOLD)
+      cycleDown();
+    else if (dy < -SWIPE_THRESHOLD)
+      cycleUp();
+    else
       applyMode();
-    }
   };
   btn.addEventListener("pointerup", endDrag);
   btn.addEventListener("pointercancel", endDrag);
@@ -731,22 +849,16 @@ function init2() {
   up = getEl2("whiteboard-up");
   if (!panel)
     return;
-  wireButton(down, () => {
-    if (mode === "closed")
-      setMode("peek");
-    else
-      setMode("full");
+  wireButton(down, cycleDown);
+  wireButton(up, cycleUp);
+  positionArrows();
+  window.addEventListener("resize", positionArrows);
+  window.addEventListener("scroll", positionArrows, { passive: true });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden)
+      positionArrows();
   });
-  wireButton(up, () => {
-    if (mode === "full")
-      setMode("peek");
-    else
-      setMode("closed");
-  });
-  window.addEventListener("resize", () => {
-    if (mode === "peek")
-      applyMode();
-  });
+  new MutationObserver(positionArrows).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
   applyMode();
 }
 function sync() {
@@ -1055,7 +1167,7 @@ function formatSize(bytes) {
 }
 
 // owner-chat.js
-import { marked as marked4 } from "marked";
+import { marked as marked5 } from "marked";
 var state3 = {
   sessionId: "",
   phone: "",
@@ -1161,7 +1273,7 @@ function buildMessageRow2(role, text) {
     row.appendChild(avatar);
     const content2 = document.createElement("div");
     content2.className = "msg-content chat-markdown";
-    render(content2, marked4.parse(text || ""));
+    render(content2, marked5.parse(text || ""));
     row.appendChild(content2);
   }
   return row;
@@ -1215,7 +1327,7 @@ function finalizeStreaming() {
       row.appendChild(avatar);
       const content2 = document.createElement("div");
       content2.className = "msg-content chat-markdown";
-      render(content2, marked4.parse(text.trim()));
+      render(content2, marked5.parse(text.trim()));
       row.appendChild(content2);
       if (container) {
         container.appendChild(row);
@@ -1291,7 +1403,7 @@ function handleChunk2(content2) {
   streamingContent += content2;
   const contentDiv = streamingEl.querySelector(".msg-content");
   if (contentDiv) {
-    render(contentDiv, marked4.parse(streamingContent));
+    render(contentDiv, marked5.parse(streamingContent));
   }
 }
 function handleDone2(content2) {

@@ -59,6 +59,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
                 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
                 <link rel="stylesheet" href=(topcoat::tailwind::stylesheet!())>
+                <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
                 <script>{ (Unescaped::new_unchecked(r#"(function(){
                     var saved = localStorage.getItem('theme');
                     var mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -87,7 +88,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 whiteboard_panel()
                 <script type="application/json" id="landing-data">(serde_json::to_string(&ctx.landing).unwrap_or_default())</script>
                 <script type="application/json" id="settings-data">(serde_json::to_string(&ctx.settings).unwrap_or_default())</script>
-                <script type="importmap">{ (Unescaped::new_unchecked(r#"{"imports":{"marked":"https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.esm.js","highlight.js":"https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js"}}"#)) }</script>
+                <script type="importmap">{ (Unescaped::new_unchecked(r#"{"imports":{"marked":"https://cdn.jsdelivr.net/npm/marked@18.0.5/lib/marked.esm.js","highlight.js":"https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/es/highlight.min.js","katex":"https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.mjs","mermaid":"https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs"}}"#)) }</script>
                 <script type="module" src=(asset!("assets/js/chat/app.js"))></script>
                 <script>{ (Unescaped::new_unchecked(r#"
                 var canvas = document.getElementById('bg-canvas');
