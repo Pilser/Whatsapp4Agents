@@ -387,6 +387,10 @@
     margin: 0 auto;
     cursor: zoom-in;
   }
+  #whiteboard-body .wb-widget {
+    contain: content;
+    max-width: 100%;
+  }
 
   #mermaid-modal {
     position: fixed;

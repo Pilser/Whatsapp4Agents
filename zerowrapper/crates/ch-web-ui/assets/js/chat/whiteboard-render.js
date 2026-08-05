@@ -21,7 +21,7 @@ export function renderBody(container, bodyMd) {
     container.innerHTML = ''
     return
   }
-  renderMarkdown(container, marked.parse(bodyMd))
+  renderMarkdown(container, marked.parse(bodyMd), true)
 }
 
 function buildCard(pin) {

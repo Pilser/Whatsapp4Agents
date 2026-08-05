@@ -369,11 +369,51 @@ export function wrapTables(el) {
   })
 }
 
-export function render(el, html) {
+function hasWidgetMarker(root) {
+  if (!root.matches) return false
+  if (root.matches('script')) return false
+  if (root.matches('style')) return true
+  return root.querySelector('style') !== null && root.querySelector('script') === null
+}
+
+function isolateWidgets(el) {
+  Array.from(el.children).forEach(child => {
+    if (!hasWidgetMarker(child)) return
+    const wrap = document.createElement('div')
+    wrap.className = 'wb-widget'
+    el.insertBefore(wrap, child)
+    const root = wrap.attachShadow({ mode: 'open' })
+    root.appendChild(child)
+  })
+}
+
+function collectScripts(root) {
+  const scripts = Array.from(root.querySelectorAll('script'))
+  root.querySelectorAll('*').forEach(node => {
+    if (node.shadowRoot) scripts.push(...collectScripts(node.shadowRoot))
+  })
+  return scripts
+}
+
+function executeScripts(el) {
+  collectScripts(el).forEach(old => {
+    const s = document.createElement('script')
+    for (const attr of old.attributes) s.setAttribute(attr.name, attr.value)
+    s.textContent = old.textContent
+    old.replaceWith(s)
+  })
+}
+
+export function render(el, html, runScripts = false) {
   html = html.replace(/<img\s/gi, '<img loading="lazy" ')
   html = html.replace(/<iframe\s/gi, '<iframe loading="lazy" ')
   html = html.replace(/<video\s/gi, '<video preload="none" ')
   el.innerHTML = html
+  if (runScripts) {
+    const hasScript = el.querySelector('script') !== null
+    if (!hasScript) isolateWidgets(el)
+    executeScripts(el)
+  }
   wrapTables(el)
   highlight(el)
   renderMermaid(el)
