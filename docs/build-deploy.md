@@ -17,7 +17,7 @@ Key paths:
 - Crate: `zerowrapper/crates/ch-web-ui`
 - JS entry: `zerowrapper/crates/ch-web-ui/assets/js/chat/app-entry.js`
 - Deploy roots: `/home/vox/pilserlabs/vox` and `/home/vox/pilserlabs/pilserlabs`
-- Compose + env: `/home/vox/pilserlabs/wrapper/{compose.yml,vox.env,pilserlabs.env}`
+- Compose + env (tracked in this repo): `zerowrapper/deploy/{compose.yml,vox.env,pilserlabs.env}`
 
 ## Two-part build
 
@@ -82,11 +82,12 @@ mv -f /home/vox/pilserlabs/pilserlabs/zw.new /home/vox/pilserlabs/pilserlabs/zw
 change:
 
 ```bash
-docker compose -f /home/vox/pilserlabs/wrapper/compose.yml -p vox \
-  --env-file /home/vox/pilserlabs/wrapper/vox.env up -d --force-recreate
+cd zerowrapper/deploy
+docker compose -f compose.yml -p vox \
+  --env-file vox.env up -d --force-recreate
 
-docker compose -f /home/vox/pilserlabs/wrapper/compose.yml -p pilserlabs \
-  --env-file /home/vox/pilserlabs/wrapper/pilserlabs.env up -d --force-recreate
+docker compose -f compose.yml -p pilserlabs \
+  --env-file pilserlabs.env up -d --force-recreate
 ```
 
 ### 6. Verify
