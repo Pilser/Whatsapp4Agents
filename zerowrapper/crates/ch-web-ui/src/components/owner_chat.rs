@@ -4,7 +4,7 @@ use topcoat::view::{view, component, Unescaped};
 #[component]
 pub async fn owner_chat() -> Result {
     view! {
-        <div id="owner-chat" class="hidden flex flex-col min-h-screen" style="background: var(--color-bg);">
+        <div id="owner-chat" class="hidden flex flex-col" style="background: var(--color-bg); height: 100dvh; max-height: 100dvh; overflow: hidden;">
             <div class="flex items-center justify-between px-4 py-3" style="flex-shrink: 0; border-bottom: 1px solid var(--color-border-weak);">
                 <div class="flex items-center gap-2">
                     <span class="text-sm font-bold" style="color: var(--color-text-strong);">"Owner Chat"</span>
@@ -71,17 +71,6 @@ pub async fn owner_chat() -> Result {
 #owner-messages .msg-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; max-width: 100%; overflow: hidden; }
 #owner-messages .attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--color-border-weak); background: var(--color-bg-weak); color: var(--color-text); max-width: 100%; overflow: hidden; word-break: break-all; hyphens: auto; }
 #owner-messages > .message-row.user .msg-content p { word-break: break-word; overflow-wrap: break-word; white-space: pre-wrap; }
-#owner-messages .tool-call-details { font-size: 0.8rem; }
-#owner-messages .tool-call-details summary { cursor: pointer; padding: 2px 0; user-select: none; }
-#owner-messages .tool-call-details pre { font-size: 0.7rem; opacity: 0.7; margin: 4px 0 0; white-space: pre-wrap; overflow-x: auto; max-height: 200px; border-top: 1px solid var(--color-border-weak); padding-top: 4px; }
-#owner-messages .tc-pill-status { display: inline-block; width: 12px; text-align: center; }
-#owner-messages .tc-pill-status.running { animation: owner-spin 1s linear infinite; }
-#owner-messages .tc-pill-status.done { color: var(--color-status-success, #34c759); }
-#owner-messages .thinking-block { margin-bottom: 8px; }
-#owner-messages .thinking-block details { font-size: 0.8rem; }
-#owner-messages .thinking-block summary { cursor: pointer; user-select: none; opacity: 0.6; display: flex; align-items: center; gap: 4px; }
-#owner-messages .thinking-block pre { font-size: 0.7rem; opacity: 0.5; margin: 4px 0 0; white-space: pre-wrap; overflow-x: auto; max-height: 200px; }
-#owner-messages .think-icon { width: 14px; height: 14px; flex-shrink: 0; }
-@keyframes owner-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"#)) }</style>
+"#)) }</style>
     }
 }

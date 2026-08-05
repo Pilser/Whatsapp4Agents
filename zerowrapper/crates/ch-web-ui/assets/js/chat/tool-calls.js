@@ -3,7 +3,9 @@ import { escapeHtml } from './constants.js'
 
 let pending = []
 
-export function handleToolCall(id, name, args) {
+export function handleToolCall(id, name, args, container) {
+  const target = container || els.messages
+  if (!target) return
   const pill = document.createElement('div')
   pill.className = 'tool-call-pill'
   pill.dataset.id = id || ''
@@ -19,7 +21,7 @@ export function handleToolCall(id, name, args) {
     if (detail) detail.classList.toggle('hidden')
   })
 
-  els.messages.appendChild(pill)
+  target.appendChild(pill)
   pill.scrollIntoView({ behavior: 'smooth', block: 'end' })
   pending.push({ id: id || '', el: pill, name: name })
 }

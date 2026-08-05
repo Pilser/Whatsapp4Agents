@@ -3,6 +3,8 @@ import { marked } from 'marked'
 import { render as renderMarkdown } from './markdown.js'
 import { USER_AVATAR, BOT_AVATAR, escapeHtml } from './constants.js'
 import * as whiteboard from './whiteboard.js'
+import { appendThought, closeThought } from './streaming.js'
+import { handleToolCall as renderToolCall, handleToolResult as renderToolResult, clearPending as clearPendingToolCalls } from './tool-calls.js'
 
 export const state = {
   sessionId: '',
@@ -14,8 +16,7 @@ let streamingContent = ''
 let streamingEl = null
 let onFinalize = null
 let typingTimer = null
-let pendingToolCalls = new Map()
-let activeThought = null
+
 
 function getEl(id) { return document.getElementById(id) }
 function getContainer() { return getEl('owner-messages') }
@@ -168,35 +169,15 @@ function handleThinking(content) {
   showTyping()
   if (typingTimer) clearTimeout(typingTimer)
   typingTimer = setTimeout(() => { hideTyping() }, 30000)
-  if (!activeThought) {
-    const container = getContainer()
-    if (!container) return
-    const hint = getHint()
-    if (hint) hint.style.display = 'none'
-    const row = document.createElement('div')
-    row.className = 'message-row assistant'
-    const avatar = document.createElement('div')
-    avatar.className = 'msg-avatar'
-    avatar.innerHTML = BOT_AVATAR
-    row.appendChild(avatar)
-    const contentDiv = document.createElement('div')
-    contentDiv.className = 'msg-content'
-    contentDiv.innerHTML = '<details class="thinking-block" open><summary>+ thoughts</summary><pre></pre></details>'
-    row.appendChild(contentDiv)
-    container.appendChild(row)
-    activeThought = row
-    row.scrollIntoView({ block: 'end' })
-  }
-  const pre = activeThought.querySelector('.thinking-block pre')
-  if (pre) pre.textContent += (content || '')
+  const container = getContainer()
+  if (!container) return
+  const hint = getHint()
+  if (hint) hint.style.display = 'none'
+  appendThought(content, container)
 }
 
 function finalizeThought() {
-  if (activeThought) {
-    const details = activeThought.querySelector('.thinking-block')
-    if (details) details.removeAttribute('open')
-    activeThought = null
-  }
+  closeThought()
 }
 
 function handleChunk(content) {
@@ -244,50 +225,12 @@ function handleToolCall(id, name, args) {
   if (!container) return
   const hint = getHint()
   if (hint) hint.style.display = 'none'
-  const row = document.createElement('div')
-  row.className = 'message-row tool-call'
-  row.dataset.toolCallId = id
-  const avatar = document.createElement('div')
-  avatar.className = 'msg-avatar'
-  avatar.innerHTML = BOT_AVATAR
-  row.appendChild(avatar)
-  const content = document.createElement('div')
-  content.className = 'msg-content'
-  const argsStr = typeof args === 'string' ? args : JSON.stringify(args, null, 2)
-  content.innerHTML = '<details class="tool-call-details">' +
-    '<summary><span class="tc-pill-status running">\u25CC</span> + acting</summary>' +
-    '<p style="margin:4px 0 2px;font-weight:600;font-size:0.8rem;">' + escapeHtml(name) + '</p>' +
-    '<pre>' + escapeHtml(argsStr) + '</pre>' +
-  '</details>'
-  row.appendChild(content)
-  container.appendChild(row)
-  row.scrollIntoView({ block: 'end' })
-  pendingToolCalls.set(id, row)
+  renderToolCall(id, name, args, container)
 }
 
 function handleToolResult(id, name, output) {
   finalizeThought()
-  const row = pendingToolCalls.get(id)
-  if (!row) return
-  const details = row.querySelector('.tool-call-details')
-  if (details) {
-    const summary = details.querySelector('summary')
-    if (summary) {
-      summary.innerHTML = '<span class="tc-pill-status done">\u2713</span> + acting'
-    }
-    if (output) {
-      const existingPre = details.querySelector('pre')
-      if (existingPre) existingPre.remove()
-      const pre = document.createElement('pre')
-      if (output.length > 80) {
-        pre.innerHTML = '<details><summary>' + escapeHtml(output.slice(0, 80)) + '...</summary><pre>' + escapeHtml(output) + '</pre></details>'
-      } else {
-        pre.textContent = output
-      }
-      details.appendChild(pre)
-    }
-  }
-  pendingToolCalls.delete(id)
+  renderToolResult(id, name, output)
 }
 
 function ownerFetchHistory() {
@@ -322,7 +265,7 @@ function ownerFetchHistory() {
 export function connectOwnerWs() {
   if (network.getState() !== network.State.DISCONNECTED) network.disconnect()
   resetStreaming()
-  pendingToolCalls.clear()
+  clearPendingToolCalls()
 
   const refreshBtn = getEl('owner-refresh-btn')
   if (refreshBtn) {
@@ -382,7 +325,7 @@ export function connectOwnerWs() {
     },
     onClose: () => {
       resetStreaming()
-      pendingToolCalls.clear()
+      clearPendingToolCalls()
       showOwnerDisconnected()
     },
   })
@@ -391,7 +334,7 @@ export function connectOwnerWs() {
 export function disconnectOwnerWs() {
   network.disconnect()
   resetStreaming()
-  pendingToolCalls.clear()
+  clearPendingToolCalls()
 }
 
 export function sendOwnerMessage(text, attachments) {

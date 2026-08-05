@@ -45,8 +45,9 @@ function scheduleRender(id) {
   })
 }
 
-export function handleThinking(text) {
-  showTyping()
+export function appendThought(content, container) {
+  const target = container || els.messages
+  if (!target) return
   if (!activeThought) {
     const pill = document.createElement('div')
     pill.className = 'thought-pill'
@@ -56,22 +57,29 @@ export function handleThinking(text) {
       const detail = pill.querySelector('.tc-pill-detail')
       if (detail) detail.classList.toggle('hidden')
     })
-    els.messages.appendChild(pill)
+    target.appendChild(pill)
     const detail = pill.querySelector('.tc-pill-detail')
     if (detail) detail.classList.remove('hidden')
     pill.scrollIntoView({ behavior: 'smooth', block: 'end' })
     activeThought = pill
   }
   const pre = activeThought.querySelector('.tc-pill-detail pre')
-  if (pre) pre.textContent += text
+  if (pre) pre.textContent += (content || '')
 }
 
-function finalizeThought() {
+export function closeThought() {
   if (activeThought) {
     const detail = activeThought.querySelector('.tc-pill-detail')
     if (detail) detail.classList.add('hidden')
     activeThought = null
   }
+}
+
+function finalizeThought() { closeThought() }
+
+export function handleThinking(text, container) {
+  if (!container) showTyping()
+  appendThought(text, container)
 }
 
 export function handleChunk(text) {

@@ -762,8 +762,10 @@ function scheduleRender(id) {
     target.scrollIntoView({ behavior: "smooth", block: "end" });
   });
 }
-function handleThinking(text) {
-  showTyping();
+function appendThought(content2, container) {
+  const target = container || els.messages;
+  if (!target)
+    return;
   if (!activeThought) {
     const pill = document.createElement("div");
     pill.className = "thought-pill";
@@ -773,7 +775,7 @@ function handleThinking(text) {
       if (detail2)
         detail2.classList.toggle("hidden");
     });
-    els.messages.appendChild(pill);
+    target.appendChild(pill);
     const detail = pill.querySelector(".tc-pill-detail");
     if (detail)
       detail.classList.remove("hidden");
@@ -782,15 +784,23 @@ function handleThinking(text) {
   }
   const pre = activeThought.querySelector(".tc-pill-detail pre");
   if (pre)
-    pre.textContent += text;
+    pre.textContent += content2 || "";
 }
-function finalizeThought() {
+function closeThought() {
   if (activeThought) {
     const detail = activeThought.querySelector(".tc-pill-detail");
     if (detail)
       detail.classList.add("hidden");
     activeThought = null;
   }
+}
+function finalizeThought() {
+  closeThought();
+}
+function handleThinking(text, container) {
+  if (!container)
+    showTyping();
+  appendThought(text, container);
 }
 function handleChunk(text) {
   finalizeThought();
@@ -951,7 +961,10 @@ function abortHistoryFetch() {
 
 // tool-calls.js
 var pending = [];
-function handleToolCall(id, name, args) {
+function handleToolCall(id, name, args, container) {
+  const target = container || els.messages;
+  if (!target)
+    return;
   const pill = document.createElement("div");
   pill.className = "tool-call-pill";
   pill.dataset.id = id || "";
@@ -962,7 +975,7 @@ function handleToolCall(id, name, args) {
     if (detail)
       detail.classList.toggle("hidden");
   });
-  els.messages.appendChild(pill);
+  target.appendChild(pill);
   pill.scrollIntoView({ behavior: "smooth", block: "end" });
   pending.push({ id: id || "", el: pill, name });
 }
@@ -1105,7 +1118,7 @@ function getEl2(id) {
   return document.getElementById(id);
 }
 function getInputTop() {
-  const input = getEl2("chat-input") || getEl2("owner-chat-input");
+  const input = activeInput();
   if (!input)
     return window.innerHeight * 0.6;
   return input.getBoundingClientRect().top;
@@ -1549,8 +1562,6 @@ var streamingContent = "";
 var streamingEl = null;
 var onFinalize2 = null;
 var typingTimer = null;
-var pendingToolCalls = new Map;
-var activeThought2 = null;
 function getEl3(id) {
   return document.getElementById(id);
 }
@@ -1715,38 +1726,16 @@ function handleThinking2(content2) {
   typingTimer = setTimeout(() => {
     hideTyping2();
   }, 30000);
-  if (!activeThought2) {
-    const container = getContainer();
-    if (!container)
-      return;
-    const hint = getHint();
-    if (hint)
-      hint.style.display = "none";
-    const row = document.createElement("div");
-    row.className = "message-row assistant";
-    const avatar = document.createElement("div");
-    avatar.className = "msg-avatar";
-    avatar.innerHTML = BOT_AVATAR;
-    row.appendChild(avatar);
-    const contentDiv = document.createElement("div");
-    contentDiv.className = "msg-content";
-    contentDiv.innerHTML = '<details class="thinking-block" open><summary>+ thoughts</summary><pre></pre></details>';
-    row.appendChild(contentDiv);
-    container.appendChild(row);
-    activeThought2 = row;
-    row.scrollIntoView({ block: "end" });
-  }
-  const pre = activeThought2.querySelector(".thinking-block pre");
-  if (pre)
-    pre.textContent += content2 || "";
+  const container = getContainer();
+  if (!container)
+    return;
+  const hint = getHint();
+  if (hint)
+    hint.style.display = "none";
+  appendThought(content2, container);
 }
 function finalizeThought2() {
-  if (activeThought2) {
-    const details = activeThought2.querySelector(".thinking-block");
-    if (details)
-      details.removeAttribute("open");
-    activeThought2 = null;
-  }
+  closeThought();
 }
 function handleChunk2(content2) {
   finalizeThought2();
@@ -1799,47 +1788,11 @@ function handleToolCall2(id, name, args) {
   const hint = getHint();
   if (hint)
     hint.style.display = "none";
-  const row = document.createElement("div");
-  row.className = "message-row tool-call";
-  row.dataset.toolCallId = id;
-  const avatar = document.createElement("div");
-  avatar.className = "msg-avatar";
-  avatar.innerHTML = BOT_AVATAR;
-  row.appendChild(avatar);
-  const content2 = document.createElement("div");
-  content2.className = "msg-content";
-  const argsStr = typeof args === "string" ? args : JSON.stringify(args, null, 2);
-  content2.innerHTML = '<details class="tool-call-details">' + '<summary><span class="tc-pill-status running">◌</span> + acting</summary>' + '<p style="margin:4px 0 2px;font-weight:600;font-size:0.8rem;">' + escapeHtml(name) + "</p>" + "<pre>" + escapeHtml(argsStr) + "</pre>" + "</details>";
-  row.appendChild(content2);
-  container.appendChild(row);
-  row.scrollIntoView({ block: "end" });
-  pendingToolCalls.set(id, row);
+  handleToolCall(id, name, args, container);
 }
 function handleToolResult2(id, name, output) {
   finalizeThought2();
-  const row = pendingToolCalls.get(id);
-  if (!row)
-    return;
-  const details = row.querySelector(".tool-call-details");
-  if (details) {
-    const summary = details.querySelector("summary");
-    if (summary) {
-      summary.innerHTML = '<span class="tc-pill-status done">✓</span> + acting';
-    }
-    if (output) {
-      const existingPre = details.querySelector("pre");
-      if (existingPre)
-        existingPre.remove();
-      const pre = document.createElement("pre");
-      if (output.length > 80) {
-        pre.innerHTML = "<details><summary>" + escapeHtml(output.slice(0, 80)) + "...</summary><pre>" + escapeHtml(output) + "</pre></details>";
-      } else {
-        pre.textContent = output;
-      }
-      details.appendChild(pre);
-    }
-  }
-  pendingToolCalls.delete(id);
+  handleToolResult(id, name, output);
 }
 function ownerFetchHistory() {
   if (!state3.phone)
@@ -1875,7 +1828,7 @@ function connectOwnerWs() {
   if (getState() !== State.DISCONNECTED)
     disconnect();
   resetStreaming();
-  pendingToolCalls.clear();
+  clearPending();
   const refreshBtn = getEl3("owner-refresh-btn");
   if (refreshBtn) {
     refreshBtn.addEventListener("click", () => location.reload());
@@ -1937,7 +1890,7 @@ function connectOwnerWs() {
     },
     onClose: () => {
       resetStreaming();
-      pendingToolCalls.clear();
+      clearPending();
       showOwnerDisconnected();
     }
   });
@@ -1945,7 +1898,7 @@ function connectOwnerWs() {
 function disconnectOwnerWs() {
   disconnect();
   resetStreaming();
-  pendingToolCalls.clear();
+  clearPending();
 }
 function sendOwnerMessage(text, attachments) {
   if (getState() !== State.CONNECTED) {

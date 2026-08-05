@@ -16,7 +16,7 @@ let dragging = false
 function getEl(id) { return document.getElementById(id) }
 
 function getInputTop() {
-  const input = getEl('chat-input') || getEl('owner-chat-input')
+  const input = activeInput()
   if (!input) return window.innerHeight * 0.6
   return input.getBoundingClientRect().top
 }
