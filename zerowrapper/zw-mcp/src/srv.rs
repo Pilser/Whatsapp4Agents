@@ -23,11 +23,13 @@ const USAGE: &str =
        srv records get <board_id> --seq N\n\
        srv records query <board_id> '<$.path>' [--eq value]\n\
        srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N]\n\
+       srv records search <board_id> '<query>' [--limit N]\n\
        srv records count <board_id>\n\
        srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
        srv records delete <board_id> [--seq N | --all]\n\
-     filter ops: eq neq gt gte lt lte contains not_contains in\n\
-     filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | [cond, ...]\n\
+     filter ops: eq neq gt gte lt lte contains not_contains in search\n\
+     filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
+     search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
      files:\n\
        srv files list <board_id>\n\
        srv files get <board_id> <file_id> --out <path>";

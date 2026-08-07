@@ -259,7 +259,7 @@ fn action_help(action: &str) -> &'static str {
         "move" => "wb --session <sid> move <from> to <to>\n\nreorders pages by one-based position\n",
         "set-public" => "wb --session <sid> set-public <page_no> on|off\n\ntakes a frozen snapshot and publishes /w/<slug> (on) or removes it (off)\n",
         "show" => "wb --session <sid> show <page_no>\n\nprints page_no, total_pages, title and a short preview (first ~600 chars) — not the full body; read the .wb file for the rest\n",
-        "srv" => "wb --session <sid> srv <group> <verb> [args]\n\nthe serverless-app CLI: build and manage stateless apps + their data INSIDE a whiteboard, using only this MCP tool (no backend code, no shell tool).\ngroups:\n  apps   create --title \"t\" [--json <schema>] [--public-reads on|off] | list | show <id> | schema <id> | update <id> [--title] [--json|--clear-schema] [--public-reads] | delete <id>\n  records submit <id> <json> | list <id> [--limit N] | get <id> --seq N | query <id> '<$.path>' [--eq v] | count <id> | delete <id> [--seq N|--all]\n  files   list <id> | get <id> <file_id> --out <path>\nFor the full sub-command help run: srv <group> --help\n",
+        "srv" => "wb --session <sid> srv <group> <verb> [args]\n\nthe serverless-app CLI: build and manage stateless apps + their data INSIDE a whiteboard, using only this MCP tool (no backend code, no shell tool).\ngroups:\n  apps   create --title \"t\" [--json <schema>] [--public-reads on|off] | list | show <id> | schema <id> | update <id> [--title] [--json|--clear-schema] [--public-reads] | delete <id>\n  records submit <id> <json> | list <id> [--limit N] | get <id> --seq N | query <id> --filter '<json>' [--order][--limit] | search <id> '<query>' [--limit N] (full-text BM25) | count <id> | aggregate <id> --op sum|avg|min|max|count --field '<$.path>' [--group_by][--filter] | delete <id> [--seq N|--all]\n  files   list <id> | get <id> <file_id> --out <path>\nFor the full sub-command help run: srv <group> --help\n",
         _ => GLOBAL_USAGE,
     }
 }
@@ -279,10 +279,15 @@ const ABOUT_TEXT: &str =
      1. Put HTML/CSS/JS into a page (e.g. a <script> that calls the serverless API).\n\
      2. Create the app: wb --session <sid> srv apps create --title \"My App\" --json '{\"type\":\"object\",\"properties\":{...}}' [--public-reads on]\n\
         This returns a secret board_id and stores your JSON schema as validation data.\n\
-     3. The embedded JS writes data:   POST /api/srv/<board_id>/submit   (JSON, validated vs the schema)\n\
-        reads (if you set public-reads on): GET /api/srv/<board_id>/records\n\
+3. The embedded JS writes data:   POST /api/srv/<board_id>/submit   (JSON, validated vs the schema)\n\
+        reads (if you set public-reads on):\n\
+          GET /api/srv/<board_id>/records                          all records\n\
+          GET /api/srv/<board_id>/records?q=<query>             full-text search (BM25-ranked, whole payload)\n\
+          GET /api/srv/<board_id>/records?filter=<json>         filter e.g. {\"price\":{\"gte\":500}}\n\
+          GET /api/srv/<board_id>/records?order=price&dir=asc&limit=10\n\
+          GET /api/srv/<board_id>/aggregate?op=sum&field=price&group_by=category&filter={...}\n\
         uploads a file:                  POST /api/srv/<board_id>/upload (multipart or raw-body)\n\
-     4. You manage everything here:      wb --session <sid> srv apps|records|files ...\n\
+      4. You manage everything here:      wb --session <sid> srv apps|records|files ... (run 'srv --help')\n\
      \n\
      Start: wb --session <sid> about | wb --session <sid> list | wb --session <sid> srv --help";
 
