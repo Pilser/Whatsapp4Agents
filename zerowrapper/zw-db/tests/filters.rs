@@ -8,22 +8,22 @@ async fn in_filter_matches() {
     let pool = zw_db::DbPool::open(db_path.to_str().unwrap()).await.unwrap();
     pool.migrate().await.unwrap();
 
-    let board = pool.srv_app_create("owner", "t", None, true).await.unwrap();
+    let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     for brand in ["Dell", "Apple", "Lenovo"] {
         let payload = serde_json::json!({"brand": brand, "price": 100});
-        pool.srv_record_insert(&board, &payload).await.unwrap();
+        pool.srv_record_insert(&board, &payload, None, false).await.unwrap();
     }
 
     let f = parse_filter(&serde_json::json!({"brand": {"in": ["Apple", "Dell"]}})).unwrap();
-    let rows = pool.srv_record_filter(&board, &f.conds, None, 50).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &f.conds, None, 50, 0).await.unwrap();
     assert_eq!(rows.len(), 2, "in should match Dell + Apple, got {:?}", rows);
 
     let f = parse_filter(&serde_json::json!({"price": {"gte": 100}})).unwrap();
-    let rows = pool.srv_record_filter(&board, &f.conds, None, 50).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &f.conds, None, 50, 0).await.unwrap();
     assert_eq!(rows.len(), 3, "gte should match all");
 
     let f = parse_filter(&serde_json::json!({"brand": {"contains": "e"}})).unwrap();
-    let rows = pool.srv_record_filter(&board, &f.conds, None, 50).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &f.conds, None, 50, 0).await.unwrap();
     assert_eq!(rows.len(), 3, "contains 'e' should match Dell + Apple + Lenovo");
 
     let agg = pool.srv_record_aggregate(&board, &[], Agg::Count, None, None).await.unwrap();

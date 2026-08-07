@@ -3,10 +3,13 @@ use topcoat::router::{Body, Response, StatusCode, route, path_param, to_bytes, h
 use topcoat::context::{Cx, app_context};
 
 use crate::context::AppContext;
-use zw_db::serverless::{Agg, gen_file_id, parse_filter, srv_board_file_path, srv_board_files_dir};
+use zw_db::serverless::{Agg, FilterCond, Op, gen_file_id, parse_filter, srv_board_file_path, srv_board_files_dir};
 
 #[path_param]
 struct BoardId(str);
+
+#[path_param]
+struct Seq(str);
 
 fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
     Response::builder()
@@ -37,6 +40,12 @@ fn params_to_json<'a>(records: &[zw_db::serverless::SrvRecord]) -> Vec<serde_jso
             let mut v = serde_json::json!({"seq": r.seq, "payload": r.payload, "created_at": r.created_at});
             if let Some(score) = r.score {
                 v["score"] = serde_json::json!(score);
+            }
+            if let Some(w) = &r.writer {
+                v["writer"] = serde_json::json!(w);
+            }
+            if let Some(s) = &r.snippet {
+                v["snippet"] = serde_json::json!(s);
             }
             v
         })
@@ -77,6 +86,7 @@ fn url_decode(s: &str) -> String {
 pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
+    let params = query_params(cx);
 
     let body_bytes = match to_bytes(body, 1_000_000).await {
         Ok(b) => b,
@@ -96,7 +106,17 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
         return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})));
     }
 
-    match ctx.db.srv_record_insert(board_id, &payload).await {
+    let writer = headers(cx)
+        .get("X-Writer")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| params.get("writer").map(|w| w.to_string()))
+        .filter(|w| !w.is_empty());
+
+    let upsert = params.get("upsert").is_some()
+        || matches!(params.get("upsert").map(|v| *v), Some("1") | Some("true"));
+
+    match ctx.db.srv_record_insert(board_id, &payload, writer.as_deref(), upsert).await {
         Ok(seq) => Ok(json_response(StatusCode::CREATED, serde_json::json!({"ok": true, "seq": seq}))),
         Err(e) => {
             tracing::warn!("srv_submit: insert error: {}", e);
@@ -119,6 +139,9 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
     let board_id = path_param::<BoardId>(cx);
     let params = query_params(cx);
     let limit: i64 = params.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50).clamp(1, 500);
+    let offset: i64 = params.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0).max(0);
+    let hl = params.get("hl").and_then(|v| if *v == "1" || *v == "on" || *v == "true" { Some(()) } else { None }).is_some();
+    let writer = params.get("writer").map(|w| url_decode(w)).filter(|w| !w.is_empty());
     let order = params.get("order").map(|o| url_decode(o)).filter(|o| !o.is_empty()).map(|o| {
         let desc = match params.get("dir").map(|d| *d) {
             Some("asc") => false,
@@ -134,7 +157,7 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
     };
 
     let records = if let Some(q) = params.get("q").map(|q| url_decode(q)).filter(|q| !q.is_empty()) {
-        let conds = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
+        let mut conds = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
             let parsed: serde_json::Value = match serde_json::from_str(&f) {
                 Ok(v) => v,
                 Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid filter json"}))),
@@ -146,7 +169,10 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         } else {
             Vec::new()
         };
-        match ctx.db.srv_record_search(board_id, &q, &conds, limit).await {
+        if let Some(w) = &writer {
+            conds.insert(0, FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
+        }
+        match ctx.db.srv_record_search(board_id, &q, &conds, limit, offset, hl).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: search error: {}", e);
@@ -158,13 +184,16 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             Ok(v) => v,
             Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid filter json"}))),
         };
-        let filter = match parse_filter(&parsed) {
+        let mut filter = match parse_filter(&parsed) {
             Ok(sf) => sf,
             Err(e) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
         };
+        if let Some(w) = &writer {
+            filter.conds.push(FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
+        }
         match ctx
             .db
-            .srv_record_filter(board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit)
+            .srv_record_filter(board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit, offset)
             .await
         {
             Ok(r) => r,
@@ -173,8 +202,17 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
                 return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "query failed"})));
             }
         }
+    } else if let Some(w) = &writer {
+        let conds = vec![FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) }];
+        match ctx.db.srv_record_filter(board_id, &conds, None, limit, offset).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("srv_records: writer filter error: {}", e);
+                return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "query failed"})));
+            }
+        }
     } else {
-        match ctx.db.srv_record_list(board_id, limit, None).await {
+        match ctx.db.srv_record_list(board_id, limit, None, offset).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: list error: {}", e);
@@ -247,15 +285,101 @@ pub async fn srv_record(cx: &Cx) -> Result<Response> {
     };
 
     match ctx.db.srv_record_get(board_id, seq).await {
-        Ok(Some(record)) => Ok(json_response(
-            StatusCode::OK,
-            serde_json::json!({"ok": true, "record": {"seq": record.seq, "payload": record.payload, "created_at": record.created_at}}),
-        )),
+        Ok(Some(record)) => {
+            let records_json = params_to_json(&[record]);
+            let rec = records_json[0].clone();
+            Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "record": rec})))
+        }
         Ok(None) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
         Err(e) => {
             tracing::warn!("srv_record: get error: {}", e);
             Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "get failed"})))
         }
+    }
+}
+
+#[route(PUT "/api/srv/{board_id}/records/{seq}")]
+pub async fn srv_record_put(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    let seq: i64 = match path_param::<Seq>(cx).parse() {
+        Ok(s) => s,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid seq"}))),
+    };
+
+    match ctx.db.srv_app_by_id(board_id).await {
+        Ok(Some(_)) => {}
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    }
+
+    let body_bytes = match to_bytes(body, 1_000_000).await {
+        Ok(b) => b,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(p) => p,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+
+    if let Err(e) = ctx.db.srv_validate(board_id, &payload).await {
+        return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})));
+    }
+
+    match ctx.db.srv_record_get(board_id, seq).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+        Err(e) => {
+            tracing::warn!("srv_record_put: get error: {}", e);
+            return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "get failed"})));
+        }
+    }
+
+    let writer = headers(cx).get("X-Writer").and_then(|v| v.to_str().ok()).map(str::to_string);
+
+    match ctx.db.srv_record_set(board_id, seq, &payload, writer.as_deref()).await {
+        Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "seq": seq}))),
+        Err(e) => {
+            tracing::warn!("srv_record_put: set error: {}", e);
+            Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})))
+        }
+    }
+}
+
+#[route(PATCH "/api/srv/{board_id}/records/{seq}")]
+pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    let seq: i64 = match path_param::<Seq>(cx).parse() {
+        Ok(s) => s,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid seq"}))),
+    };
+
+    match ctx.db.srv_app_by_id(board_id).await {
+        Ok(Some(_)) => {}
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    }
+
+    let body_bytes = match to_bytes(body, 1_000_000).await {
+        Ok(b) => b,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+    let ops: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(p) => p,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+
+    match ctx.db.srv_record_get(board_id, seq).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+        Err(e) => {
+            tracing::warn!("srv_record_patch_route: get error: {}", e);
+            return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "get failed"})));
+        }
+    }
+
+    match ctx.db.srv_record_patch(board_id, seq, &ops).await {
+        Ok(merged) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "seq": seq, "payload": merged}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
     }
 }
 
@@ -292,7 +416,7 @@ async fn persist_upload(
     payload.insert("type".to_string(), serde_json::json!(content_type));
     payload.insert("size".to_string(), serde_json::json!(data.len()));
 
-    match ctx.db.srv_record_insert(board_id, &serde_json::Value::Object(payload)).await {
+    match ctx.db.srv_record_insert(board_id, &serde_json::Value::Object(payload), None, false).await {
         Ok(seq) => json_response(
             StatusCode::CREATED,
             serde_json::json!({"ok": true, "seq": seq, "file": format!("files/{}.bin", file_id)}),

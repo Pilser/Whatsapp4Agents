@@ -13,6 +13,7 @@ pub struct SrvApp {
     pub title: String,
     pub schema_json: Option<String>,
     pub public_reads: bool,
+    pub unique_key: Option<String>,
     pub record_count: i64,
     pub created_at: String,
 }
@@ -23,7 +24,11 @@ pub struct SrvRecord {
     pub payload: serde_json::Value,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub writer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
 }
 
 fn sq(s: &str) -> String {
@@ -52,15 +57,19 @@ async fn read_app(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApp>> {
             Value::Integer(i) => i != 0,
             _ => false,
         };
-        let record_count = match row.get_value(5)? {
+        let unique_key = match row.get_value(5)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        let record_count = match row.get_value(6)? {
             Value::Integer(i) => i,
             _ => 0,
         };
-        let created_at = match row.get_value(6)? {
+        let created_at = match row.get_value(7)? {
             Value::Text(s) => s,
             _ => return Err(anyhow::anyhow!("invalid created_at")),
         };
-        Ok(Some(SrvApp { board_id, owner_key, title, schema_json, public_reads, record_count, created_at }))
+        Ok(Some(SrvApp { board_id, owner_key, title, schema_json, public_reads, unique_key, record_count, created_at }))
     } else {
         Ok(None)
     }
@@ -81,7 +90,11 @@ pub(crate) async fn read_record(rows: &mut turso::Rows) -> anyhow::Result<Option
             Value::Text(s) => s,
             _ => return Err(anyhow::anyhow!("invalid created_at")),
         };
-        Ok(Some(SrvRecord { seq, payload, created_at, score: None }))
+        let writer = match row.get_value(3)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        Ok(Some(SrvRecord { seq, payload, created_at, writer, score: None, snippet: None }))
     } else {
         Ok(None)
     }
@@ -102,19 +115,29 @@ pub(crate) async fn read_record_scored(rows: &mut turso::Rows) -> anyhow::Result
             Value::Text(s) => s,
             _ => return Err(anyhow::anyhow!("invalid created_at")),
         };
-        let score = match row.get_value(3)? {
+        let writer = match row.get_value(3)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        let score = match row.get_value(4)? {
             Value::Real(f) => Some(f),
             Value::Integer(i) => Some(i as f64),
             _ => None,
         };
-        Ok(Some(SrvRecord { seq, payload, created_at, score }))
+        let snippet = match row.get_value(5)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        Ok(Some(SrvRecord { seq, payload, created_at, writer, score, snippet }))
     } else {
         Ok(None)
     }
 }
 
+const RECORD_COLS: &str = "seq, payload, created_at, writer";
+
 impl DbPool {
-    pub async fn srv_app_create(&self, owner: &str, title: &str, schema_json: Option<&str>, public_reads: bool) -> anyhow::Result<String> {
+    pub async fn srv_app_create(&self, owner: &str, title: &str, schema_json: Option<&str>, public_reads: bool, unique_key: Option<&str>) -> anyhow::Result<String> {
         let conn = self.conn().await;
         let board_id = gen_board_id();
         let b = sq(&board_id);
@@ -124,20 +147,24 @@ impl DbPool {
             Some(s) => format!("'{}'", sq(s)),
             None => "NULL".to_string(),
         };
+        let u = match unique_key {
+            Some(u) => format!("'{}'", sq(u)),
+            None => "NULL".to_string(),
+        };
         let p = if public_reads { 1 } else { 0 };
         let sql = format!(
-            "INSERT INTO wb_apps (board_id, owner_key, title, schema_json, public_reads) \
-             VALUES ('{b}', '{o}', '{t}', {s}, {p})"
+            "INSERT INTO wb_apps (board_id, owner_key, title, schema_json, public_reads, unique_key) \
+             VALUES ('{b}', '{o}', '{t}', {s}, {p}, {u})"
         );
         conn.execute(&sql, Params::Positional(vec![])).await?;
         Ok(board_id)
     }
 
-    pub async fn srv_app_by_id(&self, board_id: &str) -> anyhow::Result<Option<SrvApp>> {
+    async fn read_app_raw(&self, board_id: &str) -> anyhow::Result<Option<SrvApp>> {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE board_id = ?1",
@@ -147,11 +174,15 @@ impl DbPool {
         read_app(&mut rows).await
     }
 
+    pub async fn srv_app_by_id(&self, board_id: &str) -> anyhow::Result<Option<SrvApp>> {
+        self.read_app_raw(board_id).await
+    }
+
     pub async fn srv_app_owned(&self, board_id: &str, owner: &str) -> anyhow::Result<Option<SrvApp>> {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE board_id = ?1 AND owner_key = ?2",
@@ -165,7 +196,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE owner_key = ?1 ORDER BY created_at",
@@ -179,7 +210,7 @@ impl DbPool {
         Ok(out)
     }
 
-    pub async fn srv_app_update(&self, board_id: &str, owner: &str, title: Option<&str>, schema: Option<Option<&str>>, public_reads: Option<bool>) -> anyhow::Result<()> {
+    pub async fn srv_app_update(&self, board_id: &str, owner: &str, title: Option<&str>, schema: Option<Option<&str>>, public_reads: Option<bool>, unique_key: Option<Option<&str>>) -> anyhow::Result<()> {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
@@ -209,6 +240,11 @@ impl DbPool {
         }
         if let Some(b) = public_reads {
             sets.push(format!("public_reads = {}", if b { 1 } else { 0 }));
+        }
+        match unique_key {
+            Some(Some(u)) => sets.push(format!("unique_key = '{}'", sq(u))),
+            Some(None) => sets.push("unique_key = NULL".to_string()),
+            None => {}
         }
         if sets.is_empty() {
             return Ok(());
@@ -269,21 +305,60 @@ impl DbPool {
         }
     }
 
-    pub async fn srv_record_insert(&self, board_id: &str, payload: &serde_json::Value) -> anyhow::Result<i64> {
-        let conn = self.conn().await;
-        let mut rows = conn
-            .query(
-                "SELECT owner_key FROM wb_apps WHERE board_id = ?1",
-                Params::Positional(vec![Value::from(board_id)]),
-            )
-            .await?;
-        let owner = match rows.next().await? {
-            Some(row) => match row.get_value(0)? {
-                Value::Text(s) => s,
-                _ => return Err(anyhow::anyhow!("invalid owner_key")),
-            },
-            None => anyhow::bail!("board {board_id} does not exist"),
+    async fn unique_from_payload(&self, _board_id: &str, unique_key: &str, payload: &serde_json::Value) -> anyhow::Result<Option<String>> {
+        let value = value_at_path(payload, unique_key);
+        let Some(v) = value else {
+            return Ok(None);
         };
+        if v.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(scalar_string(v)))
+    }
+
+    async fn unique_holder(&self, board_id: &str, unique_key: &str, value: &str, exclude_seq: Option<i64>) -> anyhow::Result<Option<i64>> {
+        let conn = self.conn().await;
+        let (sql, params) = match exclude_seq {
+            Some(e) => (
+                "SELECT seq FROM wb_records WHERE board_id = ?1 AND CAST(json_extract(payload, ?2) AS TEXT) = ?3 AND seq <> ?4 LIMIT 1",
+                Params::Positional(vec![Value::from(board_id), Value::from(unique_key), Value::from(value), Value::Integer(e)]),
+            ),
+            None => (
+                "SELECT seq FROM wb_records WHERE board_id = ?1 AND CAST(json_extract(payload, ?2) AS TEXT) = ?3 LIMIT 1",
+                Params::Positional(vec![Value::from(board_id), Value::from(unique_key), Value::from(value)]),
+            ),
+        };
+        let mut rows = conn.query(sql, params).await?;
+        match rows.next().await? {
+            Some(row) => match row.get_value(0)? {
+                Value::Integer(i) => Ok(Some(i)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
+
+    pub async fn srv_record_insert(&self, board_id: &str, payload: &serde_json::Value, writer: Option<&str>, upsert: bool) -> anyhow::Result<i64> {
+        let app = self
+            .srv_app_by_id(board_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
+        let unique_val = match app.unique_key.as_deref() {
+            Some(key) => self.unique_from_payload(board_id, key, payload).await?,
+            None => None,
+        };
+        if let Some(value) = &unique_val {
+            let key = app.unique_key.as_deref().unwrap_or_default();
+            if let Some(existing) = self.unique_holder(board_id, key, value, None).await? {
+                if !upsert {
+                    anyhow::bail!("duplicate value '{value}' for unique field {key} (already record seq {existing})");
+                }
+                self.srv_record_set(board_id, existing, payload, writer).await?;
+                return Ok(existing);
+            }
+        }
+
+        let conn = self.conn().await;
         let mut seq_rows = conn
             .query(
                 "SELECT COALESCE((SELECT MAX(seq) FROM wb_records WHERE board_id = ?1), 0) + 1",
@@ -298,50 +373,146 @@ impl DbPool {
             None => 1,
         };
         let text = serde_json::to_string(payload)?;
+        let w = match writer {
+            Some(w) => format!("'{}'", sq(w)),
+            None => "NULL".to_string(),
+        };
         let b = sq(board_id);
-        let o = sq(&owner);
+        let o = sq(&app.owner_key);
         let t = sq(&text);
         let sql = format!(
             "BEGIN; \
-             INSERT INTO wb_records (board_id, owner_key, seq, payload) VALUES ('{b}', '{o}', {seq}, '{t}'); \
+             INSERT INTO wb_records (board_id, owner_key, seq, payload, writer) VALUES ('{b}', '{o}', {seq}, '{t}', {w}); \
              COMMIT;"
         );
         conn.execute_batch(&sql).await?;
         Ok(seq)
     }
 
-    pub async fn srv_record_list(&self, board_id: &str, limit: i64, before: Option<i64>) -> anyhow::Result<Vec<SrvRecord>> {
+    /// Replace an existing record's payload (identity and created_at preserved).
+    pub async fn srv_record_set(&self, board_id: &str, seq: i64, payload: &serde_json::Value, writer: Option<&str>) -> anyhow::Result<()> {
+        self.srv_validate(board_id, payload).await?;
+        let app = self
+            .srv_app_by_id(board_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
+        if let Some(key) = app.unique_key.as_deref() {
+            if let Some(value) = self.unique_from_payload(board_id, key, payload).await? {
+                if let Some(existing) = self.unique_holder(board_id, key, &value, Some(seq)).await? {
+                    anyhow::bail!("duplicate value '{value}' for unique field {key} (already record seq {existing})");
+                }
+            }
+        }
+        let conn = self.conn().await;
+        let w = match writer {
+            Some(w) => format!("'{}'", sq(w)),
+            None => "NULL".to_string(),
+        };
+        let t = sq(&serde_json::to_string(payload)?);
+        let b = sq(board_id);
+        conn.execute(
+            &format!("UPDATE wb_records SET payload = '{t}', writer = {w} WHERE board_id = '{b}' AND seq = {seq}"),
+            Params::Positional(vec![]),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn srv_record_get_raw(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
+        let conn = self.conn().await;
+        let mut rows = conn
+            .query(
+                "SELECT seq, payload, created_at, writer FROM wb_records WHERE board_id = ?1 AND seq = ?2",
+                Params::Positional(vec![Value::from(board_id), Value::Integer(seq)]),
+            )
+            .await?;
+        read_record(&mut rows).await
+    }
+
+    /// Apply a patch (subset of MongoDB-style ops) to an existing record's payload.
+    /// `ops` is either a plain object (shallow top-level merge, like a $set of leaf keys)
+    /// or an object whose keys start with '$' and group single-path ops:
+    ///   {"$set": {"a.b.c": v}, "$inc": {"votes": 1}, "$dec": {...}, "$mul": {...}, "$unset": ["a.b", ...]}
+    /// Returns the resulting (validated) payload.
+    pub async fn srv_record_patch(&self, board_id: &str, seq: i64, ops: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let app = self
+            .srv_app_by_id(board_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
+        let current = self
+            .srv_record_get_raw(board_id, seq)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("record seq {seq} does not exist"))?;
+        let mut merged = current.payload.clone();
+
+        match ops {
+            serde_json::Value::Object(map) => {
+                let has_dollar = map.keys().any(|k| k.starts_with('$'));
+                if has_dollar {
+                    apply_patch_ops(&mut merged, ops)?;
+                } else {
+                    for (k, v) in map {
+                        merged[k.as_str()] = v.clone();
+                    }
+                }
+            }
+            other => anyhow::bail!("patch must be a JSON object, got {}", serde_json::to_string(other)?),
+        }
+
+        self.srv_validate(board_id, &merged).await?;
+        if let Some(key) = app.unique_key.as_deref() {
+            if let Some(value) = self.unique_from_payload(board_id, key, &merged).await? {
+                if let Some(existing) = self.unique_holder(board_id, key, &value, Some(seq)).await? {
+                    anyhow::bail!("duplicate value '{value}' for unique field {key} (already record seq {existing})");
+                }
+            }
+        }
+        let conn = self.conn().await;
+        let t = sq(&serde_json::to_string(&merged)?);
+        let b = sq(board_id);
+        conn.execute(
+            &format!("UPDATE wb_records SET payload = '{t}' WHERE board_id = '{b}' AND seq = {seq}"),
+            Params::Positional(vec![]),
+        )
+        .await?;
+        Ok(merged)
+    }
+
+    pub async fn srv_record_get(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
+        self.srv_record_get_raw(board_id, seq).await
+    }
+
+    pub async fn srv_record_list(&self, board_id: &str, limit: i64, before: Option<i64>, offset: i64) -> anyhow::Result<Vec<SrvRecord>> {
         let conn = self.conn().await;
         let limit = limit.clamp(1, 200);
-        let (sql, params) = match before {
-            Some(b) => (
-                "SELECT seq, payload, created_at FROM wb_records \
-                 WHERE board_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3",
-                Params::Positional(vec![Value::from(board_id), Value::Integer(b), Value::Integer(limit)]),
-            ),
-            None => (
-                "SELECT seq, payload, created_at FROM wb_records \
-                 WHERE board_id = ?1 ORDER BY seq DESC LIMIT ?2",
-                Params::Positional(vec![Value::from(board_id), Value::Integer(limit)]),
-            ),
+        let offset = offset.max(0);
+        let mut params;
+        let sql = match before {
+            Some(b) => {
+                params = vec![Value::from(board_id), Value::Integer(b), Value::Integer(limit)];
+                if offset > 0 {
+                    params.push(Value::Integer(offset));
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3 OFFSET ?4")
+                } else {
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3")
+                }
+            }
+            None => {
+                params = vec![Value::from(board_id), Value::Integer(limit)];
+                if offset > 0 {
+                    params.push(Value::Integer(offset));
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC LIMIT ?2 OFFSET ?3")
+                } else {
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC LIMIT ?2")
+                }
+            }
         };
-        let mut rows = conn.query(sql, params).await?;
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = read_record(&mut rows).await? {
             out.push(record);
         }
         Ok(out)
-    }
-
-    pub async fn srv_record_get(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
-        let conn = self.conn().await;
-        let mut rows = conn
-            .query(
-                "SELECT seq, payload, created_at FROM wb_records WHERE board_id = ?1 AND seq = ?2",
-                Params::Positional(vec![Value::from(board_id), Value::Integer(seq)]),
-            )
-            .await?;
-        read_record(&mut rows).await
     }
 
     pub async fn srv_record_count(&self, board_id: &str) -> anyhow::Result<i64> {
@@ -365,17 +536,15 @@ impl DbPool {
         let conn = self.conn().await;
         let (sql, params) = match eq {
             Some(v) => (
-                "SELECT seq, payload, created_at FROM wb_records \
-                 WHERE board_id = ?1 AND CAST(json_extract(payload, ?2) AS TEXT) = ?3 ORDER BY seq DESC",
+                format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND CAST(json_extract(payload, ?2) AS TEXT) = ?3 ORDER BY seq DESC"),
                 Params::Positional(vec![Value::from(board_id), Value::from(json_path), Value::from(v)]),
             ),
             None => (
-                "SELECT seq, payload, created_at FROM wb_records \
-                 WHERE board_id = ?1 ORDER BY seq DESC",
+                format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC"),
                 Params::Positional(vec![Value::from(board_id)]),
             ),
         };
-        let mut rows = conn.query(sql, params).await?;
+        let mut rows = conn.query(&sql, params).await?;
         let mut out = Vec::new();
         while let Some(record) = read_record(&mut rows).await? {
             out.push(record);
@@ -402,6 +571,173 @@ impl DbPool {
             }
         }
         Ok(())
+    }
+}
+
+fn scalar_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b) => b.to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn value_at_path<'a>(v: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    let segs = crate::filters::path_items(path)?;
+    let mut cur = v;
+    for seg in &segs {
+        match seg {
+            crate::filters::PathSeg::Key(k) => cur = cur.as_object()?.get(k.as_str())?,
+            crate::filters::PathSeg::Idx(i) => cur = cur.as_array()?.get(*i)?,
+        }
+    }
+    Some(cur)
+}
+
+/// Parse `$set/$inc/...` opaque patch object and apply it in place.
+fn apply_patch_ops(target: &mut serde_json::Value, ops: &serde_json::Value) -> anyhow::Result<()> {
+    let map = match ops {
+        serde_json::Value::Object(m) => m,
+        _ => anyhow::bail!("patch ops must be an object"),
+    };
+    for (key, value) in map {
+        match key.as_str() {
+            "$set" => {
+                let fields = value.as_object().ok_or_else(|| anyhow::anyhow!("$set needs an object of {{path: value}}"))?;
+                for (path, val) in fields {
+                    let segs = crate::filters::path_items(path).ok_or_else(|| anyhow::anyhow!("invalid path '{path}'"))?;
+                    set_path(target, segs, val.clone())?;
+                }
+            }
+            "$unset" => {
+                let paths: Vec<String> = match value {
+                    serde_json::Value::Array(a) => a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(),
+                    serde_json::Value::Object(m) => m.keys().map(|k| k.clone()).collect(),
+                    other => anyhow::bail!("$unset requires an array of field paths, got {}", other),
+                };
+                for path in paths {
+                    if let Some(segs) = crate::filters::path_items(&path) {
+                        unset_path(target, segs);
+                    }
+                }
+            }
+            "$inc" => apply_arith(target, value, 1.0)?,
+            "$dec" => apply_arith(target, value, -1.0)?,
+            "$mul" => apply_mul(target, value)?,
+            other => {
+                if let Some(segs) = crate::filters::path_items(other) {
+                    set_path(target, segs, value.clone())?;
+                } else {
+                    anyhow::bail!("unknown patch operator '${}' or invalid path '{other}'", other);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_arith(target: &mut serde_json::Value, value: &serde_json::Value, sign: f64) -> anyhow::Result<()> {
+    let fields = value.as_object().ok_or_else(|| anyhow::anyhow!("$inc/$dec requires an object of {{path: delta}}"))?;
+    for (path, delta) in fields {
+        let d = match (delta.as_f64(), sign) {
+            (Some(d), s) => d * s,
+            _ => anyhow::bail!("$inc/$dec delta for '{path}' must be a number"),
+        };
+        let segs = crate::filters::path_items(path).ok_or_else(|| anyhow::anyhow!("invalid path '{path}'"))?;
+        let cur = value_at_path(target, path).cloned().unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
+        let base = cur.as_f64().unwrap_or(0.0);
+        set_path(target, segs, serde_json::json!(base + d))?;
+    }
+    Ok(())
+}
+
+fn apply_mul(target: &mut serde_json::Value, value: &serde_json::Value) -> anyhow::Result<()> {
+    let fields = value.as_object().ok_or_else(|| anyhow::anyhow!("$mul requires an object of {{path: factor}}"))?;
+    for (path, factor) in fields {
+        let f = factor
+            .as_f64()
+            .ok_or_else(|| anyhow::anyhow!("$mul factor for '{path}' must be a number"))?;
+        let cur = value_at_path(target, path).cloned().unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
+        let base = cur.as_f64().unwrap_or(0.0);
+        let segs = crate::filters::path_items(path).ok_or_else(|| anyhow::anyhow!("invalid path '{path}'"))?;
+        set_path(target, segs, serde_json::json!(base * f))?;
+    }
+    Ok(())
+}
+
+fn set_path(target: &mut serde_json::Value, mut segs: Vec<crate::filters::PathSeg>, value: serde_json::Value) -> anyhow::Result<()> {
+    if segs.is_empty() {
+        anyhow::bail!("empty patch path");
+    }
+    let last = segs.pop().unwrap();
+    let mut cur = target;
+    for seg in &segs {
+        match seg {
+            crate::filters::PathSeg::Key(k) => {
+                let obj = cur.as_object_mut().ok_or_else(|| anyhow::anyhow!("patch path traverses a non-object"))?;
+                cur = obj.entry(k.as_str()).or_insert(serde_json::Value::Object(Default::default()));
+            }
+            crate::filters::PathSeg::Idx(i) => {
+                let arr = cur.as_array_mut().ok_or_else(|| anyhow::anyhow!("patch path traverses a non-array"))?;
+                if *i >= arr.len() {
+                    arr.resize(*i + 1, serde_json::Value::Null);
+                }
+                cur = &mut arr[*i];
+            }
+        }
+    }
+    match last {
+        crate::filters::PathSeg::Key(k) => {
+            let obj = cur.as_object_mut().ok_or_else(|| anyhow::anyhow!("patch path ends in a non-object"))?;
+            obj.insert(k.as_str().to_string(), value);
+        }
+        crate::filters::PathSeg::Idx(i) => {
+            let arr = cur.as_array_mut().ok_or_else(|| anyhow::anyhow!("patch path ends in a non-array"))?;
+            if i >= arr.len() {
+                arr.resize(i + 1, serde_json::Value::Null);
+            }
+            arr[i] = value;
+        }
+    }
+    Ok(())
+}
+
+fn unset_path(target: &mut serde_json::Value, segs: Vec<crate::filters::PathSeg>) {
+    let n = segs.len();
+    if n == 0 {
+        return;
+    }
+    let mut cur = target;
+    for seg in &segs[..n - 1] {
+        match seg {
+            crate::filters::PathSeg::Idx(i) => {
+                let Some(arr) = cur.as_array_mut() else { return };
+                if *i >= arr.len() {
+                    return;
+                }
+                cur = &mut arr[*i];
+            }
+            crate::filters::PathSeg::Key(k) => {
+                let Some(obj) = cur.as_object_mut() else { return };
+                let Some(next) = obj.get_mut(k.as_str()) else { return };
+                cur = next;
+            }
+        }
+    }
+    match &segs[n - 1] {
+        crate::filters::PathSeg::Key(k) => {
+            if let Some(obj) = cur.as_object_mut() {
+                obj.remove(k.as_str());
+            }
+        }
+        crate::filters::PathSeg::Idx(i) => {
+            if let Some(arr) = cur.as_array_mut() {
+                if *i < arr.len() {
+                    arr.remove(*i);
+                }
+            }
+        }
     }
 }
 

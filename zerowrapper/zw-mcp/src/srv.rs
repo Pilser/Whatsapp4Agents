@@ -9,24 +9,26 @@ const USAGE: &str =
      groups:\n\
        apps\n\
        records\n\
-       files\n\
-     apps:\n\
-       srv apps create --title \"<title>\" [--json <schema>] [--public-reads on|off]\n\
-       srv apps list\n\
-       srv apps show <board_id>\n\
-       srv apps schema <board_id>\n\
-       srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off]\n\
-       srv apps delete <board_id>\n\
-     records:\n\
-       srv records submit <board_id> <json>\n\
-       srv records list <board_id> [--limit N]\n\
-       srv records get <board_id> --seq N\n\
-       srv records query <board_id> '<$.path>' [--eq value]\n\
-       srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N]\n\
-       srv records search <board_id> '<query>' [--limit N]\n\
-       srv records count <board_id>\n\
-       srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
-       srv records delete <board_id> [--seq N | --all]\n\
+files\n\
+      apps:\n\
+        srv apps create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
+        srv apps list\n\
+        srv apps show <board_id>\n\
+        srv apps schema <board_id>\n\
+        srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
+        srv apps delete <board_id>\n\
+      records:\n\
+        srv records submit <board_id> <json> [--writer <id>] [--upsert]\n\
+        srv records list <board_id> [--limit N] [--offset N]\n\
+        srv records get <board_id> --seq N\n\
+        srv records update <board_id> <seq> '<json>' [--writer <id>]\n\
+        srv records patch <board_id> <seq> '<ops>'\n\
+        srv records query <board_id> '<$.path>' [--eq value]\n\
+        srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+        srv records search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
+        srv records count <board_id>\n\
+        srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
+        srv records delete <board_id> [--seq N | --all]\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
      search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
@@ -38,25 +40,30 @@ type CmdResult = Result<Value, Value>;
 
 const APPS_USAGE: &str =
     "srv apps <verb> [args]\n\
-     create --title \"<title>\" [--json <schema>] [--public-reads on|off]\n\
+     create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
      list\n\
      show <board_id>\n\
      schema <board_id>\n\
-     update <board_id> [--title \"t\"] [--json <schema> | --clear-schema] [--public-reads on|off]\n\
+     update <board_id> [--title \"t\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
      delete <board_id>\n";
 
 const RECORDS_USAGE: &str =
     "srv records <verb> [args]\n\
-     submit <board_id> <json>\n\
-     list <board_id> [--limit N]\n\
+     submit <board_id> <json> [--writer <id>] [--upsert]\n\
+     list <board_id> [--limit N] [--offset N]\n\
      get <board_id> --seq N\n\
+     update <board_id> <seq> '<json>' [--writer <id>]\n\
+     patch <board_id> <seq> '<ops>'\n\
      query <board_id> '<$.path>' [--eq value]\n\
-     query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N]\n\
-     search <board_id> '<query>' [--limit N]\n\
+     query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+     search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
      count <board_id>\n\
      aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
      delete <board_id> [--seq N | --all]\n\
      query <path> uses JSONPath: '<$.name>', '<$.a.b>', '<$.arr[0]>' (leading $ required).\n\
+     patch json: {\"$set\":{\"color\":\"black\"},\"$inc\":{\"votes\":1},\"$dec\":{...},\"$mul\":{...},\"$unset\":[\"field\",\"a.b[0]\"]}\n\
+     writer filter form: {\"writer\":{\"eq\":\"alice\"}}\n\
+     --unique: extra submit of the same unique value is rejected unless --upsert; upsert replaces the existing record keeping its seq.\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":5}}\n\
      search does ranked full-text (BM25) across the whole record payload; combines with other filter ops.\n";
@@ -172,8 +179,9 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let title = joined_flag(args, "--title").unwrap_or_else(|| "Untitled".to_string());
             let schema = joined_flag(args, "--json");
             let public_reads = public_mode(args, raw, "srv apps create")?;
+            let unique_key = joined_flag(args, "--unique");
             let board_id = db
-                .srv_app_create(sid, &title, schema.as_deref(), public_reads)
+                .srv_app_create(sid, &title, schema.as_deref(), public_reads, unique_key.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "create", "create a new app"))?;
             Ok(json!({ "status": "ok", "board_id": board_id }))
@@ -216,6 +224,13 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             } else {
                 None
             };
+            let unique_key: Option<Option<String>> = if has_flag(args, "--clear-unique") {
+                Some(None)
+            } else if let Some(u) = joined_flag(args, "--unique") {
+                Some(Some(u))
+            } else {
+                None
+            };
             let public_reads: Option<bool> = match val_after(args, "--public-reads") {
                 Some(v) if v == "on" => Some(true),
                 Some(v) if v == "off" => Some(false),
@@ -235,6 +250,7 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                 title.as_deref(),
                 schema.as_ref().map(|s| s.as_deref()),
                 public_reads,
+                unique_key.as_ref().map(|u| u.as_deref()),
             )
             .await
             .map_err(|e| err_json(&e.to_string(), raw, "srv apps update <board_id>", "srv apps update <board_id>"))?;
@@ -278,7 +294,12 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     "srv records submit <board_id> '{\"k\":1}'",
                 ));
             }
-            let json_str = unquote(&rest.iter().map(|v| v.as_str()).collect::<Vec<_>>().join(" "));
+            let json_tokens: Vec<_> = rest
+                .iter()
+                .take_while(|t| !t.starts_with("--"))
+                .map(|v| v.as_str())
+                .collect();
+            let json_str = unquote(&json_tokens.join(" "));
             let payload: Value = serde_json::from_str(&json_str).map_err(|_| {
                 err_json(
                     "invalid JSON payload",
@@ -287,11 +308,12 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     "srv records submit <board_id> '{\"k\":1}'",
                 )
             })?;
+            let writer = joined_flag(rest, "--writer");
             db.srv_validate(board_id, &payload)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
             let seq = db
-                .srv_record_insert(board_id, &payload)
+                .srv_record_insert(board_id, &payload, writer.as_deref(), has_flag(rest, "--upsert"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
             Ok(json!({ "status": "ok", "seq": seq }))
@@ -301,8 +323,12 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .and_then(|v| v.parse().ok())
                 .filter(|l| *l > 0)
                 .unwrap_or(50);
+            let offset: i64 = val_after(rest, "--offset")
+                .and_then(|v| v.parse().ok())
+                .filter(|o| *o >= 0)
+                .unwrap_or(0);
             let records = db
-                .srv_record_list(board_id, limit, None)
+                .srv_record_list(board_id, limit, None, offset)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records list", "srv records list <board_id>"))?;
             Ok(json!({ "status": "ok", "records": records }))
@@ -320,6 +346,51 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records get", "srv records get <board_id> --seq N"))?;
             Ok(json!({ "status": "ok", "record": record }))
         }
+        "update" => {
+            let seq: i64 = rest
+                .first()
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| err_json("missing <seq>", raw, "srv records update <board_id> <seq> <json>", "srv records update <board_id> 1 '{\"k\":1}'"))?;
+            let json_tokens: Vec<_> = rest[1..]
+                .iter()
+                .take_while(|t| !t.starts_with("--"))
+                .map(|v| v.as_str())
+                .collect();
+            let json_str = unquote(&json_tokens.join(" "));
+            let payload: Value = serde_json::from_str(&json_str).map_err(|_| {
+                err_json(
+                    "invalid JSON payload",
+                    raw,
+                    "srv records update <board_id> <seq> <json>",
+                    "srv records update <board_id> 1 '{\"k\":1}'",
+                )
+            })?;
+            let writer = joined_flag(rest, "--writer");
+            db.srv_record_set(board_id, seq, &payload, writer.as_deref())
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv records update", "srv records update <board_id> <seq> <json>"))?;
+            Ok(json!({ "status": "ok", "seq": seq }))
+        }
+        "patch" => {
+            let seq: i64 = rest
+                .first()
+                .and_then(|v| v.parse().ok())
+                .ok_or_else(|| err_json("missing <seq>", raw, "srv records patch <board_id> <seq> <ops>", "srv records patch <board_id> 1 '{\"$inc\":{\"votes\":1}}'"))?;
+            let ops_str = unquote(&rest[1..].iter().map(|v| v.as_str()).collect::<Vec<_>>().join(" "));
+            let ops: Value = serde_json::from_str(&ops_str).map_err(|_| {
+                err_json(
+                    "invalid JSON ops",
+                    raw,
+                    "srv records patch <board_id> <seq> <ops>",
+                    "srv records patch <board_id> 1 '{\"$inc\":{\"votes\":1}}'",
+                )
+            })?;
+            let merged = db
+                .srv_record_patch(board_id, seq, &ops)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv records patch", "srv records patch <board_id> <seq> <ops>"))?;
+            Ok(json!({ "status": "ok", "seq": seq, "payload": merged }))
+        }
         "query" => {
             if let Some(f) = joined_flag(rest, "--filter") {
                 let parsed: Value = serde_json::from_str(&f).map_err(|_| {
@@ -336,16 +407,20 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     .and_then(|v| v.parse().ok())
                     .filter(|l| *l > 0)
                     .unwrap_or(50);
+                let offset: i64 = val_after(rest, "--offset")
+                    .and_then(|v| v.parse().ok())
+                    .filter(|o| *o >= 0)
+                    .unwrap_or(0);
                 if let Some((q, others)) = split_search(&filter.conds) {
                     let records = db
-                        .srv_record_search(&board_id, &q, &others, limit)
+                        .srv_record_search(&board_id, &q, &others, limit, offset, false)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
                     return Ok(json!({ "status": "ok", "records": records }));
                 }
                 let order = order_from(rest);
                 let records = db
-                    .srv_record_filter(&board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit)
+                    .srv_record_filter(&board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit, offset)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
                 return Ok(json!({ "status": "ok", "records": records }));
@@ -378,10 +453,14 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     "srv records search <board_id> 'laptop'",
                 ));
             }
-            let limit: i64 = val_after(rest, "--limit")
+let limit: i64 = val_after(rest, "--limit")
                 .and_then(|v| v.parse().ok())
                 .filter(|l| *l > 0)
                 .unwrap_or(50);
+            let offset: i64 = val_after(rest, "--offset")
+                .and_then(|v| v.parse().ok())
+                .filter(|o| *o >= 0)
+                .unwrap_or(0);
             let query = rest
                 .iter()
                 .take_while(|t| !t.starts_with("--"))
@@ -394,7 +473,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 return Err(err_json("empty <query>", raw, "srv records search <board_id> '<query>'", "srv records search <board_id> 'laptop'"));
             }
             let records = db
-                .srv_record_search(&board_id, &query, &[], limit)
+                .srv_record_search(&board_id, &query, &[], limit, offset, has_flag(rest, "--hl"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records search", "srv records search <board_id> '<query>'"))?;
             Ok(json!({ "status": "ok", "records": records, "searched": query }))

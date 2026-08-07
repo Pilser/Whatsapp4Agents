@@ -77,6 +77,56 @@ pub fn normalize_path(p: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum PathSeg {
+    Key(String),
+    Idx(usize),
+}
+
+/// Parse a dot/bracket path like `a.b[2].c` into segments. Returns None on garbage.
+pub fn path_items(p: &str) -> Option<Vec<PathSeg>> {
+    let bytes = p.as_bytes();
+    let mut segs: Vec<PathSeg> = Vec::new();
+    let mut i = 0;
+    let mut key = String::new();
+    let push_key = |key: &mut String, segs: &mut Vec<PathSeg>| {
+        if !key.is_empty() {
+            segs.push(PathSeg::Key(std::mem::take(key)));
+        }
+    };
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        match c {
+            '.' => {
+                push_key(&mut key, &mut segs);
+                i += 1;
+            }
+            '[' => {
+                push_key(&mut key, &mut segs);
+                let close = p[i + 1..].find(']')? + i + 1;
+                let idx: usize = p[i + 1..close].trim().parse().ok()?;
+                segs.push(PathSeg::Idx(idx));
+                i = close + 1;
+                if p[i..].starts_with('.') {
+                    i += 1;
+                }
+            }
+            _ => {
+                key.push(c);
+                i += 1;
+            }
+        }
+    }
+    push_key(&mut key, &mut segs);
+    if matches!(segs.first(), Some(PathSeg::Key(k)) if k == "$") {
+        segs.remove(0);
+    }
+    if segs.is_empty() {
+        return None;
+    }
+    Some(segs)
+}
+
 fn parse_cond_obj(v: &JVal) -> anyhow::Result<Vec<FilterCond>> {
     let obj = v.as_object().ok_or_else(|| anyhow::anyhow!("a condition must be an object"))?;
     let field = normalize_path(
@@ -174,6 +224,36 @@ fn scalar_text(v: &JVal) -> String {
     }
 }
 
+fn ci_replace_once(src: &str, needle: &str) -> String {
+    let low_needle = needle.to_lowercase();
+    let low_src = src.to_lowercase();
+    let mut out = String::new();
+    let mut from = 0;
+    while let Some(rel) = low_src.get(from..).and_then(|s| s.find(&low_needle)) {
+        let start = from + rel;
+        let end = start + needle.len();
+        out.push_str(&src[from..start]);
+        out.push_str("<mark>");
+        out.push_str(&src[start..end]);
+        out.push_str("</mark>");
+        from = end;
+    }
+    out.push_str(&src[from..]);
+    out
+}
+
+/// Case-insensitive substring highlighting (matches the ngram FTS semantics: a
+/// partial token is as good as a whole word). Wraps hits in <mark>.
+pub fn highlight_substring(text: &str, query: &str) -> String {
+    let mut out = text.to_string();
+    for token in query.split_whitespace() {
+        if !token.is_empty() {
+            out = ci_replace_once(&out, token);
+        }
+    }
+    out
+}
+
 fn like_fragment(raw: &JVal) -> String {
     let mut out = String::new();
     for ch in scalar_text(raw).chars() {
@@ -205,6 +285,12 @@ pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Va
             params.push(Value::from(scalar_text(&c.value)));
             parts.push(format!("fts_match(payload, ?{qph})"));
             search_ph = Some(qph);
+            continue;
+        }
+        if c.field == "$.writer" && c.op == Op::Eq {
+            let vp = params.len() + 1;
+            params.push(Value::from(scalar_text(&c.value)));
+            parts.push(format!("writer = ?{vp}"));
             continue;
         }
         let path_ph = params.len() + 1;
@@ -287,16 +373,17 @@ impl DbPool {
         conds: &[FilterCond],
         order: Option<(&str, bool)>,
         limit: i64,
+        offset: i64,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
         let conn = self.conn().await;
         let (where_sql, mut params, search_ph) = srv_filter_where(board_id, conds);
-        let mut sql = format!("SELECT seq, payload, created_at FROM wb_records WHERE {where_sql}");
+        let mut sql = format!("SELECT seq, payload, created_at, writer FROM wb_records WHERE {where_sql}");
         match order {
             Some((field, desc)) => {
                 let op = params.len() + 1;
                 params.push(Value::from(field));
                 let dir = if desc { "DESC" } else { "ASC" };
-                sql.push_str(&format!(" ORDER BY json_extract(payload, ?{op}) {dir}"));
+                sql.push_str(&format!(" ORDER BY json_extract(payload, ?{op}) {dir}, seq DESC"));
             }
             None => match search_ph {
                 Some(q) => sql.push_str(&format!(" ORDER BY fts_score(payload, ?{q}) DESC")),
@@ -307,6 +394,11 @@ impl DbPool {
         let lp = params.len() + 1;
         params.push(Value::from(limit));
         sql.push_str(&format!(" LIMIT ?{lp}"));
+        if offset > 0 {
+            let op = params.len() + 1;
+            params.push(Value::from(offset));
+            sql.push_str(&format!(" OFFSET ?{op}"));
+        }
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = crate::serverless::read_record(&mut rows).await? {
@@ -321,6 +413,8 @@ impl DbPool {
         query: &str,
         conds: &[FilterCond],
         limit: i64,
+        offset: i64,
+        snippet: bool,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
         let conn = self.conn().await;
         let mut all = conds.to_vec();
@@ -330,14 +424,25 @@ impl DbPool {
         let limit = limit.clamp(1, 500);
         let lp = params.len() + 1;
         params.push(Value::from(limit));
-        let sql = format!(
-            "SELECT seq, payload, created_at, fts_score(payload, ?{q}) AS score FROM wb_records \
+        let mut sql = format!(
+            "SELECT seq, payload, created_at, writer, fts_score(payload, ?{q}) AS score, NULL AS snippet FROM wb_records \
              WHERE {where_sql} ORDER BY fts_score(payload, ?{q}) DESC LIMIT ?{lp}"
         );
+        if offset > 0 {
+            let op = params.len() + 1;
+            params.push(Value::from(offset));
+            sql.push_str(&format!(" OFFSET ?{op}"));
+        }
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = crate::serverless::read_record_scored(&mut rows).await? {
             out.push(record);
+        }
+        if snippet && !query.is_empty() {
+            for record in &mut out {
+                let text = serde_json::to_string(&record.payload).unwrap_or_default();
+                record.snippet = Some(highlight_substring(&text, query));
+            }
         }
         Ok(out)
     }

@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS wb_apps (
     title         TEXT NOT NULL,
     schema_json   TEXT,
     public_reads  INTEGER NOT NULL DEFAULT 0,
+    unique_key    TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_wb_apps_owner ON wb_apps(owner_key);
@@ -62,15 +63,20 @@ CREATE TABLE IF NOT EXISTS wb_records (
     owner_key   TEXT NOT NULL,
     seq         INTEGER NOT NULL,
     payload     TEXT NOT NULL,
+    writer      TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_wb_records_board ON wb_records(board_id, seq);
 CREATE INDEX IF NOT EXISTS idx_wb_records_owner ON wb_records(owner_key);
-CREATE INDEX IF NOT EXISTS idx_wb_records_fts ON wb_records USING fts (payload);
+CREATE INDEX IF NOT EXISTS idx_wb_records_fts ON wb_records USING fts (payload) WITH (tokenizer='ngram');
 ";
 
 pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'public';",
     "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE wb_apps ADD COLUMN unique_key TEXT;",
+    "ALTER TABLE wb_records ADD COLUMN writer TEXT;",
+    "DROP INDEX IF EXISTS idx_wb_records_fts; \
+     CREATE INDEX idx_wb_records_fts ON wb_records USING fts (payload) WITH (tokenizer='ngram');",
 ];

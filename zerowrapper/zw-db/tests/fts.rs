@@ -9,10 +9,10 @@ async fn fts_index_works() {
     let pool = zw_db::DbPool::open(db_path.to_str().unwrap()).await.unwrap();
     pool.migrate().await.unwrap();
 
-    let board = pool.srv_app_create("owner", "t", None, true).await.unwrap();
-    pool.srv_record_insert(&board, &serde_json::json!({"name": "Dell XPS 13", "brand": "Dell", "body": "the quick brown fox"})).await.unwrap();
-    pool.srv_record_insert(&board, &serde_json::json!({"name": "MacBook Air", "brand": "Apple", "body": "lightweight laptop"})).await.unwrap();
-    pool.srv_record_insert(&board, &serde_json::json!({"name": "ThinkPad", "brand": "Lenovo", "body": "durable workhorse"})).await.unwrap();
+    let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
+    pool.srv_record_insert(&board, &serde_json::json!({"name": "Dell XPS 13", "brand": "Dell", "body": "the quick brown fox"}), None, false).await.unwrap();
+    pool.srv_record_insert(&board, &serde_json::json!({"name": "MacBook Air", "brand": "Apple", "body": "lightweight laptop"}), None, false).await.unwrap();
+    pool.srv_record_insert(&board, &serde_json::json!({"name": "ThinkPad", "brand": "Lenovo", "body": "durable workhorse"}), None, false).await.unwrap();
 
     let conn = pool.conn().await;
     let mut rows = conn
@@ -51,12 +51,12 @@ async fn fts_index_works() {
     assert!(nohit.next().await.unwrap().is_none(), "zebra must not match");
     drop(conn);
 
-    let hits = pool.srv_record_search(&board, "laptop", &[], 10).await.unwrap();
+    let hits = pool.srv_record_search(&board, "laptop", &[], 10, 0, false).await.unwrap();
     assert_eq!(hits.len(), 1, "store search should find MacBook Air, got {:?}", hits);
     assert!(hits[0].score.is_some(), "search results should carry a score");
 
     let f = zw_db::filters::parse_filter(&serde_json::json!({"search": "workhorse", "brand": {"eq": "Lenovo"}})).unwrap();
-    let hits = pool.srv_record_search(&board, "workhorse", &f.conds, 10).await.unwrap();
+    let hits = pool.srv_record_search(&board, "workhorse", &f.conds, 10, 0, false).await.unwrap();
     assert_eq!(hits.len(), 1, "search + filter should find ThinkPad, got {:?}", hits);
 
     std::fs::remove_dir_all(&dir).ok();
