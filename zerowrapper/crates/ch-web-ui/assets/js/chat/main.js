@@ -7,6 +7,7 @@ import * as streaming from './streaming.js'
 import { addMessage } from './messages.js'
 import * as lightbox from './lightbox.js'
 import * as owner from './owner.js'
+import { fetchWithTimeout, setButtonLoading } from './fetch-util.js'
 
 function logPendingResources() {
   const entries = performance.getEntriesByType('resource')
@@ -90,15 +91,16 @@ async function handleRegister() {
   if (!raw) { auth.showAuthError('Please enter your phone number.'); return }
   const normalizedPhone = auth.normalizePhone(code, raw)
 
+  setButtonLoading(els.registerBtn, true, 'Signing in…')
   try {
-    const loginRes = await fetch('/api/login?phone=' + encodeURIComponent(normalizedPhone))
+    const loginRes = await fetchWithTimeout('/api/login?phone=' + encodeURIComponent(normalizedPhone))
     const loginData = await loginRes.json()
 
     if (loginData.exists) {
       auth.state.phone = loginData.phone
       auth.state.displayName = loginData.name || loginData.phone
     } else {
-      const regRes = await fetch('/api/register', {
+      const regRes = await fetchWithTimeout('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: normalizedPhone, name: name || undefined }),
@@ -115,7 +117,13 @@ async function handleRegister() {
     auth.showBadge()
     connection.connect()
   } catch (err) {
-    auth.showAuthError('Network error. Please try again.')
+    console.error('[auth] sign-in failed:', err)
+    const msg = err.code === 'TIMEOUT'
+      ? 'Request timed out. Please check your connection and try again.'
+      : 'Network error. Please check your connection and try again.'
+    auth.showAuthError(msg)
+  } finally {
+    setButtonLoading(els.registerBtn, false)
   }
 }
 

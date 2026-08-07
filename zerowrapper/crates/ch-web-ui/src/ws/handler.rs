@@ -19,6 +19,23 @@ fn spawn_whiteboard_forwarding(
         let mut rx = handle.subscribe();
         loop {
             match rx.recv().await {
+                Ok(zw_whiteboard::WhiteboardEvent::BoardUpdate {
+                    session_id: sid,
+                    state,
+                }) => {
+                    if sid != session_id {
+                        continue;
+                    }
+                    let flat = serde_json::json!({
+                        "type": "whiteboard_update",
+                        "session_id": sid,
+                        "state": state,
+                    });
+                    let mut sender = ws.lock().await;
+                    if sender.send(Message::Text(flat.to_string().into())).await.is_err() {
+                        break;
+                    }
+                }
                 Ok(zw_whiteboard::WhiteboardEvent::WhiteboardUpdate {
                     session_id: sid,
                     board,
@@ -109,19 +126,35 @@ pub async fn handle_ws_connection(
                     }
                     spawn_whiteboard_forwarding(&ws_sender, handle, sid.clone(), &mut whiteboard_forwarding_for);
                 }
-                let (body_md, pins) = match &whiteboard {
-                    Some(handle) => match handle.latest(&sid).await {
-                        Some(board) => (board.body_md, board.pins),
-                        None => (String::new(), Vec::new()),
+                let flat = match &whiteboard {
+                    Some(handle) => match handle.latest_state(&sid).await {
+                        Some(state) => serde_json::json!({
+                            "type": "whiteboard_update",
+                            "session_id": sid,
+                            "state": state,
+                        }),
+                        None => match handle.latest(&sid).await {
+                            Some(board) => serde_json::json!({
+                                "type": "whiteboard_update",
+                                "session_id": sid,
+                                "body_md": board.body_md,
+                                "pins": board.pins,
+                            }),
+                            None => serde_json::json!({
+                                "type": "whiteboard_update",
+                                "session_id": sid,
+                                "body_md": String::new(),
+                                "pins": Vec::<String>::new(),
+                            }),
+                        },
                     },
-                    None => (String::new(), Vec::new()),
+                    None => serde_json::json!({
+                        "type": "whiteboard_update",
+                        "session_id": sid,
+                        "body_md": String::new(),
+                        "pins": Vec::<String>::new(),
+                    }),
                 };
-                let flat = serde_json::json!({
-                    "type": "whiteboard_update",
-                    "session_id": sid,
-                    "body_md": body_md,
-                    "pins": pins,
-                });
                 let mut sender = ws_sender.lock().await;
                 let _ = sender.send(Message::Text(flat.to_string().into())).await;
             }

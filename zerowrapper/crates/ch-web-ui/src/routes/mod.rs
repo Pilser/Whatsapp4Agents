@@ -5,3 +5,5 @@ pub mod health;
 pub mod owner;
 pub mod owner_dashboard;
 pub mod files;
+pub mod public_wb;
+pub mod mcp;

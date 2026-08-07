@@ -2,6 +2,7 @@ import * as network from './network.js'
 import * as connection from './connection.js'
 import { uploadFile, createAttachmentChip, uploadState } from './file-upload.js'
 import * as ownerChat from './owner-chat.js'
+import { fetchWithTimeout, setButtonLoading } from './fetch-util.js'
 
 const STORAGE_PHONE = 'zerowrapper_owner_phone'
 const STORAGE_NAME = 'zerowrapper_owner_name'
@@ -168,8 +169,10 @@ async function handleLogin() {
     return
   }
 
+  const btn = document.getElementById('owner-login-btn')
+  setButtonLoading(btn, true, 'Logging in…')
   try {
-    const res = await fetch('/api/admin/login', {
+    const res = await fetchWithTimeout('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, password }),
@@ -188,8 +191,14 @@ async function handleLogin() {
     hideLogin()
     showOwnerChat()
   } catch (err) {
+    console.error('[owner] login failed:', err)
     const errEl = document.getElementById('owner-login-error')
-    if (errEl) { errEl.textContent = 'Network error'; errEl.classList.remove('hidden') }
+    const msg = err.code === 'TIMEOUT'
+      ? 'Request timed out. Please check your connection and try again.'
+      : 'Network error. Please check your connection and try again.'
+    if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden') }
+  } finally {
+    setButtonLoading(btn, false)
   }
 }
 

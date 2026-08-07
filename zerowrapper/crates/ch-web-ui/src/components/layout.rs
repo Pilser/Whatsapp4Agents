@@ -8,6 +8,7 @@ use crate::components::header::site_header;
 use crate::components::footer::site_footer;
 use crate::components::owner_chat::owner_chat;
 use crate::components::whiteboard_panel::whiteboard_panel;
+use crate::assets::STYLESHEET;
 use crate::seo;
 use topcoat::asset::asset;
 
@@ -58,7 +59,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                 <link rel="preconnect" href="https://fonts.googleapis.com">
                 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
                 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-                <link rel="stylesheet" href=(topcoat::tailwind::stylesheet!())>
+                <link rel="stylesheet" href=(STYLESHEET)>
                 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
                 <script>{ (Unescaped::new_unchecked(r#"(function(){
                     var saved = localStorage.getItem('theme');
@@ -110,7 +111,7 @@ pub async fn root_layout(cx: &Cx, slot: Result) -> Result {
                         var topAlpha = 0.28, bottomAlpha = 0.05;
                         var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
                         var dotColor = isDark
-                            ? 'hsl(28, 90%, 50%)'
+                            ? 'hsl(14, 100%, 60%)'
                             : getComputedStyle(document.documentElement).getPropertyValue('--color-bg-strong').trim() || 'hsl(0, 5%, 12%)';
                         ctx.fillStyle = dotColor;
                         var y = 4;

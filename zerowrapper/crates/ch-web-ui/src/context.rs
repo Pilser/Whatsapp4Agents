@@ -16,6 +16,7 @@ pub struct AppContext {
     pub settings: SiteSettings,
     pub landing: LandingData,
     pub whiteboard: Option<zw_whiteboard::WhiteboardHandle>,
+    pub mcp: Option<zw_mcp::dispatch::McpProviders>,
 }
 
 impl AppContext {
@@ -41,11 +42,17 @@ impl AppContext {
             settings,
             landing,
             whiteboard: None,
+            mcp: None,
         }
     }
 
     pub fn with_whiteboard(mut self, handle: zw_whiteboard::WhiteboardHandle) -> Self {
         self.whiteboard = Some(handle);
+        self
+    }
+
+    pub fn with_mcp(mut self, providers: zw_mcp::dispatch::McpProviders) -> Self {
+        self.mcp = Some(providers);
         self
     }
 

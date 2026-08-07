@@ -1,6 +1,7 @@
 pub mod migrations;
 pub mod users;
 pub mod sessions;
+pub mod whiteboard;
 
 pub use users::AccountSeed;
 

@@ -16,6 +16,35 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     last_active TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS whiteboard_pages (
+    session_id TEXT NOT NULL,
+    page_no    INTEGER NOT NULL,
+    title      TEXT NOT NULL DEFAULT '',
+    body_md    TEXT NOT NULL DEFAULT '',
+    public     INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (session_id, page_no)
+);
+
+CREATE TABLE IF NOT EXISTS whiteboard_meta (
+    session_id  TEXT PRIMARY KEY,
+    active_page INTEGER,
+    locked      INTEGER NOT NULL DEFAULT 0,
+    rev         INTEGER NOT NULL DEFAULT 0,
+    updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS whiteboard_public_pages (
+    id         TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    page_no    INTEGER NOT NULL,
+    body_md    TEXT NOT NULL,
+    pins       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_wb_public_session ON whiteboard_public_pages(session_id);
 ";
 
 pub const MIGRATIONS: &[&str] = &[

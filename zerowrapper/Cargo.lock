@@ -405,6 +405,7 @@ dependencies = [
  "zw-cache",
  "zw-core",
  "zw-db",
+ "zw-mcp",
  "zw-whiteboard",
 ]
 
@@ -4355,6 +4356,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zw-core",
+ "zw-whiteboard",
 ]
 
 [[package]]
@@ -4368,4 +4370,5 @@ dependencies = [
  "tokio",
  "tracing",
  "zw-cache",
+ "zw-db",
 ]

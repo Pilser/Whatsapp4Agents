@@ -12,6 +12,7 @@ zw-core = { path = "../../zw-core" }
 zw-db = { path = "../../zw-db" }
 zw-cache = { path = "../../zw-cache" }
 zw-whiteboard = { path = "../../zw-whiteboard" }
+zw-mcp = { path = "../../zw-mcp" }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

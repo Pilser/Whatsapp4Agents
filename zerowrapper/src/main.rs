@@ -18,13 +18,39 @@ async fn main() -> anyhow::Result<()> {
         let cache_dir_path = PathBuf::from(&cache_dir);
         let cache = Arc::new(zw_cache::CacheManager::new(&cache_dir_path));
 
+        let db_path = std::env::var("ZEROWRAPPER__DB_PATH").ok();
+
+        let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents".into());
+        let agent = std::env::var("ZEROWRAPPER_CH_WEB__AGENT").unwrap_or_else(|_| "agent".into());
+        let whiteboard_dir = std::path::PathBuf::from(&agents_dir).join(&agent).join("workspace");
+
         let mcp = zw_mcp::McpRegistry::new();
-        mcp.register_provider(Box::new(
-            mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
-        )).await;
-        mcp.register_provider(Box::new(
-            mcp_web_files_render::GetFilePathProvider::new(cache)
-        )).await;
+        if let Some(db_path) = db_path {
+            let db = zw_db::DbPool::open(&db_path).await?;
+            db.migrate().await?;
+            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(db);
+            mcp.register_provider(Box::new(
+                mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
+            )).await;
+            mcp.register_provider(Box::new(
+                mcp_web_files_render::GetFilePathProvider::new(cache.clone())
+            )).await;
+            mcp.register_provider(Box::new(
+                zw_mcp::manage_whiteboard::ManageWhiteboardProvider::new(wb)
+            )).await;
+        } else {
+            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500));
+            tracing::warn!("ZEROWRAPPER__DB_PATH unset; manage_whiteboard will report 'db not configured'");
+            mcp.register_provider(Box::new(
+                mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
+            )).await;
+            mcp.register_provider(Box::new(
+                mcp_web_files_render::GetFilePathProvider::new(cache.clone())
+            )).await;
+            mcp.register_provider(Box::new(
+                zw_mcp::manage_whiteboard::ManageWhiteboardProvider::new(wb)
+            )).await;
+        }
 
         tracing::info!("MCP-only mode — cache_dir={}", cache_dir);
         mcp.run_stdio().await?;
@@ -34,13 +60,17 @@ async fn main() -> anyhow::Result<()> {
     let config = zw_core::WrapperConfig::load()?;
     let cache = Arc::new(zw_cache::CacheManager::new(&config.cache_dir));
 
+    let db = zw_db::DbPool::open(&config.db_path).await?;
+    db.migrate().await?;
+    tracing::info!("Database migrated");
+
     let whiteboard_dir = config.ch_web.whiteboard_dir.clone().unwrap_or_else(|| {
         let agents_dir = std::env::var("AGENTS_DIR").unwrap_or_else(|_| "agents".into());
         std::path::PathBuf::from(agents_dir).join(&config.ch_web.agent).join("workspace")
     });
     tracing::info!("whiteboard dir: {}", whiteboard_dir.display());
 
-    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500));
+    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(db.clone());
     let _wb_task = whiteboard.spawn();
 
     let mcp = zw_mcp::McpRegistry::new();
@@ -50,6 +80,9 @@ async fn main() -> anyhow::Result<()> {
     mcp.register_provider(Box::new(
         mcp_web_files_render::GetFilePathProvider::new(cache.clone())
     )).await;
+    mcp.register_provider(Box::new(
+        zw_mcp::manage_whiteboard::ManageWhiteboardProvider::new(whiteboard.clone())
+    )).await;
 
     if config.mcp.is_none() {
         tracing::info!("No [zerowrapper.mcp] configured (only needed if zeroclaw daemon needs to discover this server)");
@@ -57,10 +90,6 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Config loaded: zeroclaw_socket={}, db={}, web_channel={{{}}}",
         config.zeroclaw_socket, config.db_path, config.ch_web.bind);
-
-    let db = zw_db::DbPool::open(&config.db_path).await?;
-    db.migrate().await?;
-    tracing::info!("Database migrated");
 
     if !config.ch_web.accounts.is_empty() {
         let seeds: std::collections::HashMap<String, zw_db::AccountSeed> = config.ch_web.accounts.iter().map(|(k, v)| {
@@ -135,7 +164,8 @@ async fn main() -> anyhow::Result<()> {
         settings,
         landing,
     )
-    .with_whiteboard(whiteboard.clone());
+    .with_whiteboard(whiteboard.clone())
+    .with_mcp(mcp.providers());
     let ui_handle = tokio::spawn(async move {
         if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);

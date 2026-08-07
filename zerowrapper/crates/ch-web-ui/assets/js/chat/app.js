@@ -451,10 +451,10 @@ function mermaidTheme() {
       quadrantXAxisTextFill: cssVar("--color-text", "#212121"),
       quadrantYAxisTextFill: cssVar("--color-text", "#212121"),
       quadrantTitleFill: cssVar("--color-text-strong", "#0d0d0d"),
-      primaryColor: cssVar("--color-bg-interactive", "#e50078"),
-      primaryBorderColor: cssVar("--color-bg-interactive", "#e50078"),
+      primaryColor: cssVar("--color-bg-interactive", "#ff9233"),
+      primaryBorderColor: cssVar("--color-bg-interactive", "#ff9233"),
       primaryTextColor: "#ffffff",
-      secondaryColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      secondaryColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       secondaryTextColor: cssVar("--color-text-strong", "#0d0d0d"),
       tertiaryColor: bg,
       tertiaryTextColor: cssVar("--color-text", "#212121"),
@@ -470,10 +470,10 @@ function mermaidTheme() {
       labelBoxBorderColor: cssVar("--color-border-weak", border),
       labelTextColor: cssVar("--color-text-strong", "#0d0d0d"),
       loopTextColor: cssVar("--color-text-weak", "#737373"),
-      noteBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      noteBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       noteTextColor: cssVar("--color-text-strong", "#0d0d0d"),
       noteBorderColor: cssVar("--color-border-weak", border),
-      activationBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      activationBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       activationBorderColor: cssVar("--color-border", "#2f8f2f"),
       sequenceNumberColor: cssVar("--color-text-inverted", "#ffffff"),
       sequenceLineColor: cssVar("--color-text-weak", "#737373"),
@@ -483,16 +483,16 @@ function mermaidTheme() {
       taskTextOutsideColor: cssVar("--color-text-strong", "#0d0d0d"),
       taskTextLightColor: cssVar("--color-text-strong", "#0d0d0d"),
       taskTextOutsideLightColor: cssVar("--color-text-weak", "#737373"),
-      taskArrowColor: cssVar("--color-bg-interactive", "#e50078"),
-      sectionBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      taskArrowColor: cssVar("--color-bg-interactive", "#ff9233"),
+      sectionBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       sectionBkgColor2: bg,
       altSectionBkgColor: bg,
-      todayLineColor: cssVar("--color-bg-interactive", "#e50078"),
-      criticalBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      todayLineColor: cssVar("--color-bg-interactive", "#ff9233"),
+      criticalBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       criticalBorderColor: cssVar("--color-status-error", "#e03131"),
       doneBkgColor: bg,
       doneBorderColor: cssVar("--color-border", "#2f8f2f"),
-      pie1: "#e50078",
+      pie1: "#ff9233",
       pie2: "#8f3f9f",
       pie3: "#2f8f2f",
       pie4: "#c98a2f",
@@ -503,7 +503,7 @@ function mermaidTheme() {
       pieOuterStrokeColor: cssVar("--color-border-weak", border),
       attributeBackgroundColorOdd: cssVar("--color-bg-weak", bg),
       attributeBackgroundColorEven: cssVar("--color-bg", dark ? "#0a0a0a" : "#fcfcfb"),
-      cScale0: "#e50078",
+      cScale0: "#ff9233",
       cScale1: "#2f8f2f",
       cScale2: "#3f6fc9",
       cScale3: "#c98a2f",
@@ -515,7 +515,7 @@ function mermaidTheme() {
       cScale9: "#3f9f9f",
       cScale10: "#9f8f3f",
       cScale11: "#8f5f9f",
-      git0: "#e50078",
+      git0: "#ff9233",
       git1: "#8f3f9f",
       git2: "#2f8f2f",
       git3: "#c98a2f",
@@ -523,14 +523,14 @@ function mermaidTheme() {
       git5: "#9f3f6f",
       git6: "#5f8f5f",
       git7: "#6f8fc9",
-      tagLabelBackground: cssVar("--color-bg-interactive", "#e50078"),
+      tagLabelBackground: cssVar("--color-bg-interactive", "#ff9233"),
       tagLabelColor: "#ffffff",
-      tagLabelBorder: cssVar("--color-bg-interactive", "#e50078"),
+      tagLabelBorder: cssVar("--color-bg-interactive", "#ff9233"),
       tagLabelFontSize: "11px",
       commitLabelColor: cssVar("--color-text-weak", "#737373"),
       commitLabelBackground: cssVar("--color-bg", dark ? "#0a0a0a" : "#fcfcfb"),
       commitLabelFontSize: "11px",
-      errorBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#4a1229" : "#fde3ee"),
+      errorBkgColor: cssVar("--color-bg-interactive-weak", dark ? "#3f2712" : "#f9e9dc"),
       errorTextColor: cssVar("--color-text-strong", "#0d0d0d"),
       xyChart: {
         backgroundColor: bg,
@@ -543,7 +543,7 @@ function mermaidTheme() {
         yAxisLabelColor: cssVar("--color-text", "#212121"),
         yAxisTickColor: cssVar("--color-border-weak", border),
         yAxisLineColor: cssVar("--color-border-weak", border),
-        plotColorPalette: "#e50078,#2f8f2f,#3f6fc9,#c98a2f,#8f3f9f,#9f3f6f",
+        plotColorPalette: "#ff9233,#2f8f2f,#3f6fc9,#c98a2f,#8f3f9f,#9f3f6f",
         plotBorderColor: cssVar("--color-border", "#2f8f2f"),
         legendBackgroundColor: bg,
         legendTextColor: cssVar("--color-text", "#212121")
@@ -1082,7 +1082,10 @@ function renderBody(container, bodyMd) {
     container.innerHTML = "";
     return;
   }
-  render(container, marked4.parse(bodyMd), true);
+  render(container, marked4.parse(decodeEntities(bodyMd)), true);
+}
+function decodeEntities(s) {
+  return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&amp;/g, "&");
 }
 function buildCard(pin) {
   const card = document.createElement("div");
@@ -1157,6 +1160,9 @@ var down = null;
 var up = null;
 var dragStartY = null;
 var dragging = false;
+var currentState = null;
+var currentPage = 0;
+var syncHideTimer = null;
 function getEl2(id) {
   return document.getElementById(id);
 }
@@ -1287,11 +1293,94 @@ function init2() {
       positionArrows();
   });
   new MutationObserver(positionArrows).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+  const prev = getEl2("wb-prev");
+  const next = getEl2("wb-next");
+  const share = getEl2("wb-share");
+  const copyLink = getEl2("wb-copy-link");
+  if (prev)
+    prev.addEventListener("click", () => {
+      currentPage--;
+      renderCurrent();
+    });
+  if (next)
+    next.addEventListener("click", () => {
+      currentPage++;
+      renderCurrent();
+    });
+  if (share)
+    share.addEventListener("click", () => {
+      const p = currentPageData();
+      if (!p || !p.public_slug)
+        return;
+      openPublicUrl(p.public_slug);
+    });
+  if (copyLink)
+    copyLink.addEventListener("click", () => {
+      const p = currentPageData();
+      if (!p || !p.public_slug)
+        return;
+      showLinkPop(p.public_slug);
+      copyPublicUrl(p.public_slug);
+    });
+  document.addEventListener("click", (e) => {
+    const pop = getEl2("wb-link-pop");
+    if (pop && !pop.classList.contains("hidden") && !pop.contains(e.target) && e.target.id !== "wb-copy-link" && e.target.id !== "wb-share") {
+      pop.classList.add("hidden");
+    }
+  });
   applyMode();
+}
+function publicUrl(slug) {
+  return location.origin + "/w/" + slug;
+}
+function openPublicUrl(slug) {
+  window.open(publicUrl(slug), "_blank", "noopener,noreferrer");
+}
+function showLinkPop(slug) {
+  const pop = getEl2("wb-link-pop");
+  const input = getEl2("wb-link-input");
+  const copied = getEl2("wb-link-copied");
+  if (!pop || !input)
+    return;
+  input.value = publicUrl(slug);
+  input.select();
+  if (copied)
+    copied.classList.add("hidden");
+  pop.classList.remove("hidden");
+}
+function copyPublicUrl(slug) {
+  const url2 = publicUrl(slug);
+  const done = () => {
+    const copied = getEl2("wb-link-copied");
+    if (!copied)
+      return;
+    copied.classList.remove("hidden");
+    setTimeout(() => copied.classList.add("hidden"), 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url2).then(done).catch(() => done());
+  } else {
+    const input = getEl2("wb-link-input");
+    if (input) {
+      input.select();
+      try {
+        document.execCommand("copy");
+      } catch (e) {}
+    }
+    done();
+  }
 }
 function sync() {
   if (!sessionId)
     return;
+  const spin = getEl2("wb-nav-spinner");
+  if (spin)
+    spin.classList.remove("hidden");
+  clearTimeout(syncHideTimer);
+  syncHideTimer = setTimeout(() => {
+    if (spin)
+      spin.classList.add("hidden");
+  }, 5000);
   send(JSON.stringify({ type: "whiteboard_sync", session_id: sessionId }));
 }
 function setSession(sid) {
@@ -1302,12 +1391,96 @@ function setSession(sid) {
     sync();
   }
 }
+function renderCurrent() {
+  const label = getEl2("wb-page-label");
+  const badge = getEl2("wb-lock-badge");
+  const share = getEl2("wb-share");
+  const copyLink = getEl2("wb-copy-link");
+  const prev = getEl2("wb-prev");
+  const next = getEl2("wb-next");
+  if (!currentState || !Array.isArray(currentState.pages) || currentState.pages.length === 0) {
+    renderBoard(body, pins, { body_md: "", pins: [] });
+    if (label)
+      label.textContent = "Page 1 of 1";
+    if (badge)
+      badge.classList.add("hidden");
+    if (share)
+      share.classList.add("hidden");
+    if (copyLink)
+      copyLink.classList.add("hidden");
+    if (prev)
+      prev.disabled = true;
+    if (next)
+      next.disabled = true;
+    return;
+  }
+  const pages = currentState.pages;
+  currentPage = Math.max(0, Math.min(currentPage, pages.length - 1));
+  const page = currentPageData();
+  renderBoard(body, pins, page);
+  if (label)
+    label.textContent = `Page ${currentPage + 1} of ${pages.length}`;
+  if (prev)
+    prev.disabled = currentPage <= 0;
+  if (next)
+    next.disabled = currentPage >= pages.length - 1;
+  const active = currentState.locked && page && page.page_no === currentState.active_page;
+  const isPub = !!(page && page.public_slug);
+  if (badge)
+    badge.classList.toggle("hidden", !active);
+  if (share)
+    share.classList.toggle("hidden", !isPub);
+  if (copyLink)
+    copyLink.classList.toggle("hidden", !isPub);
+  const pop = getEl2("wb-link-pop");
+  if (pop)
+    pop.classList.add("hidden");
+}
+function currentPageData() {
+  return currentState && currentState.pages && currentState.pages[currentPage] || null;
+}
 function setBoard(data) {
+  const spin = getEl2("wb-nav-spinner");
+  if (spin)
+    spin.classList.add("hidden");
+  clearTimeout(syncHideTimer);
   if (!data)
     return;
   if (data.session_id)
     sessionId = data.session_id;
+  if (data.state) {
+    currentState = data.state;
+    const pages = data.state.pages || [];
+    let idx = pages.findIndex((p) => p.page_no === data.state.active_page);
+    if (idx < 0)
+      idx = 0;
+    currentPage = Math.max(0, Math.min(idx, pages.length - 1));
+    renderCurrent();
+    return;
+  }
+  currentState = null;
   renderBoard(body, pins, data);
+  const label = getEl2("wb-page-label");
+  const badge = getEl2("wb-lock-badge");
+  const share = getEl2("wb-share");
+  const copyLink = getEl2("wb-copy-link");
+  const pop = getEl2("wb-link-pop");
+  const prev = getEl2("wb-prev");
+  const next = getEl2("wb-next");
+  if (label)
+    label.textContent = "Page 1 of 1";
+  if (badge)
+    badge.classList.add("hidden");
+  if (share)
+    share.classList.add("hidden");
+  if (copyLink)
+    copyLink.classList.add("hidden");
+  if (pop)
+    pop.classList.add("hidden");
+  if (prev)
+    prev.disabled = true;
+  if (next)
+    next.disabled = true;
 }
 
 // connection.js
@@ -1966,6 +2139,43 @@ function setOnFinalize2(fn) {
   onFinalize2 = fn;
 }
 
+// fetch-util.js
+var LOADING_CLASS = "btn-loading";
+async function fetchWithTimeout(url2, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url2, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      const e = new Error("timeout");
+      e.code = "TIMEOUT";
+      throw e;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function setButtonLoading(btn, loading, loadingText) {
+  if (!btn)
+    return;
+  if (loading) {
+    btn.dataset.originalLabel = btn.dataset.originalLabel || btn.textContent;
+    btn.disabled = true;
+    btn.classList.add(LOADING_CLASS);
+    if (loadingText)
+      btn.textContent = loadingText;
+  } else {
+    btn.disabled = false;
+    btn.classList.remove(LOADING_CLASS);
+    if (btn.dataset.originalLabel) {
+      btn.textContent = btn.dataset.originalLabel;
+      delete btn.dataset.originalLabel;
+    }
+  }
+}
+
 // owner.js
 var STORAGE_PHONE2 = "zerowrapper_owner_phone";
 var STORAGE_NAME2 = "zerowrapper_owner_name";
@@ -2126,8 +2336,10 @@ async function handleLogin() {
     }
     return;
   }
+  const btn = document.getElementById("owner-login-btn");
+  setButtonLoading(btn, true, "Logging in…");
   try {
-    const res = await fetch("/api/admin/login", {
+    const res = await fetchWithTimeout("/api/admin/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone, password })
@@ -2147,11 +2359,15 @@ async function handleLogin() {
     hideLogin();
     showOwnerChat();
   } catch (err) {
+    console.error("[owner] login failed:", err);
     const errEl2 = document.getElementById("owner-login-error");
+    const msg = err.code === "TIMEOUT" ? "Request timed out. Please check your connection and try again." : "Network error. Please check your connection and try again.";
     if (errEl2) {
-      errEl2.textContent = "Network error";
+      errEl2.textContent = msg;
       errEl2.classList.remove("hidden");
     }
+  } finally {
+    setButtonLoading(btn, false);
   }
 }
 function showOwnerChat() {
@@ -2271,14 +2487,15 @@ async function handleRegister() {
     return;
   }
   const normalizedPhone = normalizePhone(code, raw);
+  setButtonLoading(els.registerBtn, true, "Signing in…");
   try {
-    const loginRes = await fetch("/api/login?phone=" + encodeURIComponent(normalizedPhone));
+    const loginRes = await fetchWithTimeout("/api/login?phone=" + encodeURIComponent(normalizedPhone));
     const loginData = await loginRes.json();
     if (loginData.exists) {
       state2.phone = loginData.phone;
       state2.displayName = loginData.name || loginData.phone;
     } else {
-      const regRes = await fetch("/api/register", {
+      const regRes = await fetchWithTimeout("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone: normalizedPhone, name: name || undefined })
@@ -2295,7 +2512,11 @@ async function handleRegister() {
     showBadge();
     connect2();
   } catch (err) {
-    showAuthError("Network error. Please try again.");
+    console.error("[auth] sign-in failed:", err);
+    const msg = err.code === "TIMEOUT" ? "Request timed out. Please check your connection and try again." : "Network error. Please check your connection and try again.";
+    showAuthError(msg);
+  } finally {
+    setButtonLoading(els.registerBtn, false);
   }
 }
 function handleLogout() {

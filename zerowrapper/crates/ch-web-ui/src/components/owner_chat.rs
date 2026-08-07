@@ -4,13 +4,18 @@ use topcoat::view::{view, component, Unescaped};
 #[component]
 pub async fn owner_chat() -> Result {
     view! {
-        <div id="owner-chat" class="hidden flex flex-col" style="background: var(--color-bg); height: 100dvh; max-height: 100dvh; overflow: hidden;">
+        <div id="owner-chat" class="hidden flex flex-col" style="background: transparent; height: 100dvh; max-height: 100dvh; overflow: hidden;">
             <div class="flex items-center justify-between px-4 py-3" style="flex-shrink: 0; border-bottom: 1px solid var(--color-border-weak);">
                 <div class="flex items-center gap-2">
                     <span class="text-sm font-bold" style="color: var(--color-text-strong);">"Owner Chat"</span>
                     <span id="owner-role-badge" class="text-xs px-2 py-0.5 rounded" style="background: var(--color-bg-interactive); color: var(--color-text-inverted);"></span>
                 </div>
-                <button id="owner-back-btn" class="text-xs px-3 py-1.5 rounded cursor-pointer transition" style="color: var(--color-text-weak); border: 1px solid var(--color-border-weak); background: transparent;">"Back to Public"</button>
+                <div class="flex items-center gap-2">
+                    <button id="owner-theme-toggle" class="flex items-center justify-center cursor-pointer" style="padding: 6px; border: 1px solid var(--color-border-weak); border-radius: 6px; background: none; color: var(--color-text-weak);" aria-label="Toggle theme">
+                        <span id="owner-theme-icon"></span>
+                    </button>
+                    <button id="owner-back-btn" class="text-xs px-3 py-1.5 rounded cursor-pointer transition" style="color: var(--color-text-weak); border: 1px solid var(--color-border-weak); background: transparent;">"Back to Public"</button>
+                </div>
             </div>
             <div id="owner-messages" class="flex-1 overflow-y-auto px-4 py-4">
                 <div id="owner-hint" class="flex flex-col items-center justify-center py-10 gap-3">
@@ -72,5 +77,25 @@ pub async fn owner_chat() -> Result {
 #owner-messages .attachment-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 0.75rem; border-radius: 4px; border: 1px solid var(--color-border-weak); background: var(--color-bg-weak); color: var(--color-text); max-width: 100%; overflow: hidden; word-break: break-all; hyphens: auto; }
 #owner-messages > .message-row.user .msg-content p { word-break: break-word; overflow-wrap: break-word; white-space: pre-wrap; }
 "#)) }</style>
+        <script>{ (Unescaped::new_unchecked(r#"(function(){
+            var sunSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+            var moonSvg = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+            function updateOwnerThemeIcon() {
+                var theme = document.documentElement.getAttribute('data-theme');
+                var icon = document.getElementById('owner-theme-icon');
+                if (icon) icon.innerHTML = theme === 'dark' ? sunSvg : moonSvg;
+            }
+            var themeToggle = document.getElementById('owner-theme-toggle');
+            if (themeToggle) {
+                updateOwnerThemeIcon();
+                themeToggle.addEventListener('click', function() {
+                    var current = document.documentElement.getAttribute('data-theme');
+                    var next = current === 'dark' ? 'light' : 'dark';
+                    document.documentElement.setAttribute('data-theme', next);
+                    localStorage.setItem('theme', next);
+                    updateOwnerThemeIcon();
+                });
+            }
+        })();"#)) }</script>
     }
 }

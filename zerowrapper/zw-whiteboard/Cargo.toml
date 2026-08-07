@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 zw-cache = { path = "../zw-cache" }
+zw-db = { path = "../zw-db" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

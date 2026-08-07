@@ -6,6 +6,7 @@ use crate::ParsedBoard;
 #[derive(Default)]
 pub struct MonitorCore {
     pub seen: HashMap<String, FileSnapshot>,
+    pub rev: HashMap<String, i64>,
     pub latest: HashMap<String, ParsedBoard>,
 }
 

@@ -1,26 +1,30 @@
 pub mod protocol;
 pub mod dispatch;
+pub mod manage_whiteboard;
 
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use zw_core::McpToolProvider;
+use crate::dispatch::McpProviders;
 
 pub struct McpRegistry {
-    providers: Arc<RwLock<Vec<Box<dyn McpToolProvider>>>>,
+    providers: McpProviders,
 }
 
 impl McpRegistry {
     pub fn new() -> Self {
         Self {
-            providers: Arc::new(RwLock::new(Vec::new())),
+            providers: std::sync::Arc::new(tokio::sync::RwLock::new(Vec::new())),
         }
     }
 
     /// Register a provider. Call from async context with `.await`.
-    pub async fn register_provider(&self, provider: Box<dyn McpToolProvider>) {
+    pub async fn register_provider(&self, provider: Box<dyn zw_core::McpToolProvider>) {
         let name = provider.name().to_string();
         tracing::info!("Registering MCP tool provider: {}", name);
         self.providers.write().await.push(provider);
+    }
+
+    /// Shared handle to the provider list (used by both stdio and HTTP transports).
+    pub fn providers(&self) -> McpProviders {
+        self.providers.clone()
     }
 
     pub async fn run_stdio(self) -> anyhow::Result<()> {
