@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS wb_records (
 );
 CREATE INDEX IF NOT EXISTS idx_wb_records_board ON wb_records(board_id, seq);
 CREATE INDEX IF NOT EXISTS idx_wb_records_owner ON wb_records(owner_key);
+CREATE INDEX IF NOT EXISTS idx_wb_records_fts ON wb_records USING fts (payload);
 ";
 
 pub const MIGRATIONS: &[&str] = &[

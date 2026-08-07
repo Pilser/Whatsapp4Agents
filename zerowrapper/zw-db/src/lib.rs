@@ -23,6 +23,7 @@ impl DbPool {
             tokio::fs::create_dir_all(parent).await?;
         }
         let db = turso::Builder::new_local(db_path)
+            .experimental_index_method(true)
             .build()
             .await?;
         let conn = db.connect()?;

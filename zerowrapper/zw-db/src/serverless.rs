@@ -22,6 +22,8 @@ pub struct SrvRecord {
     pub seq: i64,
     pub payload: serde_json::Value,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
 }
 
 fn sq(s: &str) -> String {
@@ -79,7 +81,33 @@ pub(crate) async fn read_record(rows: &mut turso::Rows) -> anyhow::Result<Option
             Value::Text(s) => s,
             _ => return Err(anyhow::anyhow!("invalid created_at")),
         };
-        Ok(Some(SrvRecord { seq, payload, created_at }))
+        Ok(Some(SrvRecord { seq, payload, created_at, score: None }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) async fn read_record_scored(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvRecord>> {
+    if let Some(row) = rows.next().await? {
+        let seq = match row.get_value(0)? {
+            Value::Integer(i) => i,
+            _ => return Err(anyhow::anyhow!("invalid seq")),
+        };
+        let payload_text = match row.get_value(1)? {
+            Value::Text(s) => s,
+            _ => return Err(anyhow::anyhow!("invalid payload")),
+        };
+        let payload = serde_json::from_str::<serde_json::Value>(&payload_text)?;
+        let created_at = match row.get_value(2)? {
+            Value::Text(s) => s,
+            _ => return Err(anyhow::anyhow!("invalid created_at")),
+        };
+        let score = match row.get_value(3)? {
+            Value::Real(f) => Some(f),
+            Value::Integer(i) => Some(i as f64),
+            _ => None,
+        };
+        Ok(Some(SrvRecord { seq, payload, created_at, score }))
     } else {
         Ok(None)
     }

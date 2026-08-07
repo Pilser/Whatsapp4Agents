@@ -1,6 +1,6 @@
 use std::path::Path;
 use serde_json::{json, Value};
-use zw_db::serverless::{Agg, SrvFilter, parse_filter};
+use zw_db::serverless::{Agg, Op, SrvFilter, parse_filter};
 use zw_db::serverless::SrvApp;
 use zw_db::DbPool;
 
@@ -50,13 +50,14 @@ const RECORDS_USAGE: &str =
      get <board_id> --seq N\n\
      query <board_id> '<$.path>' [--eq value]\n\
      query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N]\n\
+     search <board_id> '<query>' [--limit N]\n\
      count <board_id>\n\
      aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
      delete <board_id> [--seq N | --all]\n\
      query <path> uses JSONPath: '<$.name>', '<$.a.b>', '<$.arr[0]>' (leading $ required).\n\
-     filter ops: eq neq gt gte lt lte contains not_contains in\n\
-     filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | [cond, ...]\n\
-     --eq and filter comparisons are text-based; gt/gte/lt/lte compare numerically on numeric values.\n";
+     filter ops: eq neq gt gte lt lte contains not_contains in search\n\
+     filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":5}}\n\
+     search does ranked full-text (BM25) across the whole record payload; combines with other filter ops.\n";
 
 const FILES_USAGE: &str =
     "srv files <verb> [args]\n\
@@ -95,6 +96,19 @@ fn order_from(args: &[&String]) -> Option<(String, bool)> {
         _ => false,
     };
     Some((path, desc))
+}
+
+fn split_search(conds: &[zw_db::filters::FilterCond]) -> Option<(String, Vec<zw_db::filters::FilterCond>)> {
+    let mut query = None;
+    let mut others = Vec::new();
+    for c in conds {
+        if c.op == Op::Search {
+            query = c.value.as_str().map(|s| s.to_string());
+        } else {
+            others.push(c.clone());
+        }
+    }
+    query.map(|q| (q, others))
 }
 
 fn unquote(s: &str) -> String {
@@ -316,11 +330,18 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 })?;
                 let filter = parse_filter(&parsed)
                     .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
-                let order = order_from(rest);
                 let limit: i64 = val_after(rest, "--limit")
                     .and_then(|v| v.parse().ok())
                     .filter(|l| *l > 0)
                     .unwrap_or(50);
+                if let Some((q, others)) = split_search(&filter.conds) {
+                    let records = db
+                        .srv_record_search(&board_id, &q, &others, limit)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
+                    return Ok(json!({ "status": "ok", "records": records }));
+                }
+                let order = order_from(rest);
                 let records = db
                     .srv_record_filter(&board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit)
                     .await
@@ -345,6 +366,36 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> <path>"))?;
             Ok(json!({ "status": "ok", "records": records }))
+        }
+        "search" => {
+            if rest.is_empty() {
+                return Err(err_json(
+                    "missing <query>",
+                    raw,
+                    "srv records search <board_id> '<query>'",
+                    "srv records search <board_id> 'laptop'",
+                ));
+            }
+            let limit: i64 = val_after(rest, "--limit")
+                .and_then(|v| v.parse().ok())
+                .filter(|l| *l > 0)
+                .unwrap_or(50);
+            let query = rest
+                .iter()
+                .take_while(|t| !t.starts_with("--"))
+                .map(|t| unquote(t))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_string();
+            if query.is_empty() {
+                return Err(err_json("empty <query>", raw, "srv records search <board_id> '<query>'", "srv records search <board_id> 'laptop'"));
+            }
+            let records = db
+                .srv_record_search(&board_id, &query, &[], limit)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv records search", "srv records search <board_id> '<query>'"))?;
+            Ok(json!({ "status": "ok", "records": records, "searched": query }))
         }
         "aggregate" => {
             let agg = val_after(rest, "--op")

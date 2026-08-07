@@ -14,6 +14,7 @@ pub enum Op {
     Contains,
     NotContains,
     In,
+    Search,
 }
 
 impl Op {
@@ -28,7 +29,8 @@ impl Op {
             "contains" => Ok(Op::Contains),
             "not_contains" => Ok(Op::NotContains),
             "in" => Ok(Op::In),
-            other => anyhow::bail!("unknown filter operator '{other}' (eq, neq, gt, gte, lt, lte, contains, not_contains, in)"),
+            "search" => Ok(Op::Search),
+            other => anyhow::bail!("unknown filter operator '{other}' (eq, neq, gt, gte, lt, lte, contains, not_contains, in, search)"),
         }
     }
 }
@@ -91,6 +93,9 @@ fn parse_cond_obj(v: &JVal) -> anyhow::Result<Vec<FilterCond>> {
         if op == Op::In && !value.is_array() {
             anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
         }
+        if op == Op::Search && !value.is_string() {
+            anyhow::bail!("operator \"search\" needs a string query");
+        }
         out.push(FilterCond { field: field.clone(), op, value: value.clone() });
     }
     if out.is_empty() {
@@ -110,6 +115,32 @@ pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
         JVal::Object(obj) if obj.contains_key("field") => {
             conds.extend(parse_cond_obj(v)?);
         }
+        JVal::Object(obj) if obj.contains_key("search") => {
+            let q = obj
+                .get("search")
+                .and_then(|s| s.as_str())
+                .ok_or_else(|| anyhow::anyhow!("\"search\" needs a string query"))?;
+            conds.push(FilterCond { field: "_".to_string(), op: Op::Search, value: JVal::String(q.to_string()) });
+            for (field, ops) in obj {
+                if field == "search" {
+                    continue;
+                }
+                let field = normalize_path(field);
+                let ops_map = ops
+                    .as_object()
+                    .ok_or_else(|| anyhow::anyhow!("operator map expected for field '{field}'"))?;
+                for (opname, value) in ops_map {
+                    let op = Op::parse(opname)?;
+                    if op == Op::In && !value.is_array() {
+                        anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+                    }
+                    if op == Op::Search && !value.is_string() {
+                        anyhow::bail!("operator \"search\" needs a string query");
+                    }
+                    conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
+                }
+            }
+        }
         JVal::Object(obj) => {
             for (field, ops) in obj {
                 let field = normalize_path(field);
@@ -120,6 +151,9 @@ pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
                     let op = Op::parse(opname)?;
                     if op == Op::In && !value.is_array() {
                         anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+                    }
+                    if op == Op::Search && !value.is_string() {
+                        anyhow::bail!("operator \"search\" needs a string query");
                     }
                     conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
                 }
@@ -161,10 +195,18 @@ fn jval_from_value(v: Value) -> JVal {
     }
 }
 
-pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Value>) {
+pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Value>, Option<usize>) {
     let mut params = vec![Value::from(board_id)];
     let mut parts = vec!["board_id = ?1".to_string()];
+    let mut search_ph: Option<usize> = None;
     for c in conds {
+        if c.op == Op::Search {
+            let qph = params.len() + 1;
+            params.push(Value::from(scalar_text(&c.value)));
+            parts.push(format!("fts_match(payload, ?{qph})"));
+            search_ph = Some(qph);
+            continue;
+        }
         let path_ph = params.len() + 1;
         params.push(Value::from(c.field.clone()));
         let cast_text = format!("CAST(json_extract(payload, ?{path_ph}) AS TEXT)");
@@ -172,6 +214,7 @@ pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Va
         let target = if c.value.is_number() { cast_num.clone() } else { cast_text.clone() };
         let vp = params.len() + 1;
         let frag = match c.op {
+            Op::Search => unreachable!("search handled above"),
             Op::Eq => {
                 params.push(Value::from(scalar_text(&c.value)));
                 format!("{cast_text} = ?{vp}")
@@ -217,7 +260,7 @@ pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Va
         };
         parts.push(frag);
     }
-    (format!("{}", parts.join(" AND ")), params)
+    (format!("{}", parts.join(" AND ")), params, search_ph)
 }
 
 fn agg_target(agg: Agg, field: Option<&str>, params: &mut Vec<Value>) -> anyhow::Result<String> {
@@ -246,7 +289,7 @@ impl DbPool {
         limit: i64,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
         let conn = self.conn().await;
-        let (where_sql, mut params) = srv_filter_where(board_id, conds);
+        let (where_sql, mut params, search_ph) = srv_filter_where(board_id, conds);
         let mut sql = format!("SELECT seq, payload, created_at FROM wb_records WHERE {where_sql}");
         match order {
             Some((field, desc)) => {
@@ -255,7 +298,10 @@ impl DbPool {
                 let dir = if desc { "DESC" } else { "ASC" };
                 sql.push_str(&format!(" ORDER BY json_extract(payload, ?{op}) {dir}"));
             }
-            None => sql.push_str(" ORDER BY seq DESC"),
+            None => match search_ph {
+                Some(q) => sql.push_str(&format!(" ORDER BY fts_score(payload, ?{q}) DESC")),
+                None => sql.push_str(" ORDER BY seq DESC"),
+            },
         }
         let limit = limit.clamp(1, 500);
         let lp = params.len() + 1;
@@ -264,6 +310,33 @@ impl DbPool {
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = crate::serverless::read_record(&mut rows).await? {
+            out.push(record);
+        }
+        Ok(out)
+    }
+
+    pub async fn srv_record_search(
+        &self,
+        board_id: &str,
+        query: &str,
+        conds: &[FilterCond],
+        limit: i64,
+    ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
+        let conn = self.conn().await;
+        let mut all = conds.to_vec();
+        all.push(FilterCond { field: "_".to_string(), op: Op::Search, value: JVal::String(query.to_string()) });
+        let (where_sql, mut params, search_ph) = srv_filter_where(board_id, &all);
+        let q = search_ph.ok_or_else(|| anyhow::anyhow!("search query could not be bound"))?;
+        let limit = limit.clamp(1, 500);
+        let lp = params.len() + 1;
+        params.push(Value::from(limit));
+        let sql = format!(
+            "SELECT seq, payload, created_at, fts_score(payload, ?{q}) AS score FROM wb_records \
+             WHERE {where_sql} ORDER BY fts_score(payload, ?{q}) DESC LIMIT ?{lp}"
+        );
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
+        let mut out = Vec::new();
+        while let Some(record) = crate::serverless::read_record_scored(&mut rows).await? {
             out.push(record);
         }
         Ok(out)
@@ -278,7 +351,7 @@ impl DbPool {
         group_by: Option<&str>,
     ) -> anyhow::Result<Vec<JVal>> {
         let conn = self.conn().await;
-        let (where_sql, mut params) = srv_filter_where(board_id, conds);
+        let (where_sql, mut params, _search_ph) = srv_filter_where(board_id, conds);
         let target = agg_target(agg, field, &mut params)?;
         let sql = match group_by {
             Some(g) => {

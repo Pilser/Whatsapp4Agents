@@ -33,7 +33,13 @@ fn query_params(cx: &Cx) -> std::collections::HashMap<&str, &str> {
 fn params_to_json<'a>(records: &[zw_db::serverless::SrvRecord]) -> Vec<serde_json::Value> {
     records
         .iter()
-        .map(|r| serde_json::json!({"seq": r.seq, "payload": r.payload, "created_at": r.created_at}))
+        .map(|r| {
+            let mut v = serde_json::json!({"seq": r.seq, "payload": r.payload, "created_at": r.created_at});
+            if let Some(score) = r.score {
+                v["score"] = serde_json::json!(score);
+            }
+            v
+        })
         .collect()
 }
 
@@ -127,7 +133,27 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         Err(resp) => return Ok(resp),
     };
 
-    let records = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
+    let records = if let Some(q) = params.get("q").map(|q| url_decode(q)).filter(|q| !q.is_empty()) {
+        let conds = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
+            let parsed: serde_json::Value = match serde_json::from_str(&f) {
+                Ok(v) => v,
+                Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid filter json"}))),
+            };
+            match parse_filter(&parsed) {
+                Ok(sf) => sf.conds,
+                Err(e) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+            }
+        } else {
+            Vec::new()
+        };
+        match ctx.db.srv_record_search(board_id, &q, &conds, limit).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("srv_records: search error: {}", e);
+                return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "search failed"})));
+            }
+        }
+    } else if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
         let parsed: serde_json::Value = match serde_json::from_str(&f) {
             Ok(v) => v,
             Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid filter json"}))),
