@@ -7,3 +7,5 @@ pub mod owner_dashboard;
 pub mod files;
 pub mod public_wb;
 pub mod mcp;
+pub mod multipart;
+pub mod serverless;

@@ -2,7 +2,7 @@ pub mod monitor;
 pub mod parser;
 pub mod resolve;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -130,7 +130,7 @@ impl WhiteboardHandle {
             .find(|p| p.page_no == page_no)
             .map(|p| p.body_md.clone())
             .unwrap_or_default();
-        let path = self.dir.join(format!("{sid}.wb"));
+        let path = session_path(&self.dir, sid);
         std::fs::write(&path, &body)?;
         set_world_writable(&path);
         let snapshot = {
@@ -176,7 +176,7 @@ impl WhiteboardHandle {
     }
 
     pub async fn ensure(&self, session_id: &str) -> anyhow::Result<()> {
-        let path = self.dir.join(format!("{session_id}.wb"));
+        let path = session_path(&self.dir, session_id);
         if let Some(db) = &self.db {
             let pre = db.wb_state(session_id).await.map(|(p, _)| p).unwrap_or_default();
             db.wb_ensure_session(session_id).await?;
@@ -248,6 +248,10 @@ impl WhiteboardHandle {
         &self.dir
     }
 
+    pub fn db(&self) -> Option<zw_db::DbPool> {
+        self.db.clone()
+    }
+
     async fn build_state(&self, sid: &str) -> anyhow::Result<BoardState> {
         let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
         build_board_state(db, &self.dir, &self.cache, sid).await
@@ -291,7 +295,7 @@ async fn poll_with_db(
     tx: &broadcast::Sender<WhiteboardEvent>,
     sid: &str,
 ) {
-    let path = dir.join(format!("{sid}.wb"));
+    let path = session_path(dir, sid);
     let file_changed = {
         let mut core = state.lock().await;
         core.has_changed(sid, &path)
@@ -340,7 +344,7 @@ async fn poll_without_db(
     tx: &broadcast::Sender<WhiteboardEvent>,
     sid: &str,
 ) {
-    let path = dir.join(format!("{sid}.wb"));
+    let path = session_path(dir, sid);
     let changed = {
         let mut core = state.lock().await;
         core.has_changed(sid, &path)
@@ -358,7 +362,7 @@ async fn poll_without_db(
 }
 
 fn read_board_from(dir: &PathBuf, cache: &Arc<zw_cache::CacheManager>, session_id: &str) -> Option<ParsedBoard> {
-    let path = dir.join(format!("{session_id}.wb"));
+    let path = session_path(dir, session_id);
     if !path.exists() {
         return None;
     }
@@ -371,4 +375,16 @@ fn read_board_from(dir: &PathBuf, cache: &Arc<zw_cache::CacheManager>, session_i
 fn set_world_writable(path: &std::path::Path) {
     use std::os::unix::fs::PermissionsExt;
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666));
+}
+
+fn session_path(dir: &Path, sid: &str) -> PathBuf {
+    let sess = dir.join("sessions").join(sid);
+    let path = sess.join(format!("{sid}.wb"));
+    let legacy = dir.join(format!("{sid}.wb"));
+    if legacy.is_file() && !path.exists() {
+        let _ = std::fs::create_dir_all(&sess);
+        let _ = std::fs::rename(&legacy, &path);
+    }
+    let _ = std::fs::create_dir_all(&sess);
+    path
 }

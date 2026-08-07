@@ -1,0 +1,321 @@
+use crate::DbPool;
+use serde_json::Value as JVal;
+use turso::params::Params;
+use turso::Value;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Op {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Contains,
+    NotContains,
+    In,
+}
+
+impl Op {
+    pub fn parse(s: &str) -> anyhow::Result<Op> {
+        match s {
+            "eq" => Ok(Op::Eq),
+            "neq" => Ok(Op::Ne),
+            "gt" => Ok(Op::Gt),
+            "gte" => Ok(Op::Gte),
+            "lt" => Ok(Op::Lt),
+            "lte" => Ok(Op::Lte),
+            "contains" => Ok(Op::Contains),
+            "not_contains" => Ok(Op::NotContains),
+            "in" => Ok(Op::In),
+            other => anyhow::bail!("unknown filter operator '{other}' (eq, neq, gt, gte, lt, lte, contains, not_contains, in)"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Agg {
+    Count,
+    Sum,
+    Avg,
+    Min,
+    Max,
+}
+
+impl Agg {
+    pub fn parse(s: &str) -> anyhow::Result<Agg> {
+        match s {
+            "count" => Ok(Agg::Count),
+            "sum" => Ok(Agg::Sum),
+            "avg" => Ok(Agg::Avg),
+            "min" => Ok(Agg::Min),
+            "max" => Ok(Agg::Max),
+            other => anyhow::bail!("unknown aggregate '{other}' (count, sum, avg, min, max)"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FilterCond {
+    pub field: String,
+    pub op: Op,
+    pub value: JVal,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SrvFilter {
+    pub conds: Vec<FilterCond>,
+}
+
+pub fn normalize_path(p: &str) -> String {
+    if p.starts_with('$') {
+        p.to_string()
+    } else {
+        format!("$.{}", p)
+    }
+}
+
+fn parse_cond_obj(v: &JVal) -> anyhow::Result<Vec<FilterCond>> {
+    let obj = v.as_object().ok_or_else(|| anyhow::anyhow!("a condition must be an object"))?;
+    let field = normalize_path(
+        obj.get("field")
+            .and_then(|f| f.as_str())
+            .ok_or_else(|| anyhow::anyhow!("a condition needs \"field\" (json path)"))?,
+    );
+    let mut out = Vec::new();
+    for (k, value) in obj {
+        if k == "field" {
+            continue;
+        }
+        let op = Op::parse(k)?;
+        if op == Op::In && !value.is_array() {
+            anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+        }
+        out.push(FilterCond { field: field.clone(), op, value: value.clone() });
+    }
+    if out.is_empty() {
+        anyhow::bail!("condition for '{field}' has no operators");
+    }
+    Ok(out)
+}
+
+pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
+    let mut conds = Vec::new();
+    match v {
+        JVal::Array(arr) => {
+            for el in arr {
+                conds.extend(parse_cond_obj(el)?);
+            }
+        }
+        JVal::Object(obj) if obj.contains_key("field") => {
+            conds.extend(parse_cond_obj(v)?);
+        }
+        JVal::Object(obj) => {
+            for (field, ops) in obj {
+                let field = normalize_path(field);
+                let ops_map = ops
+                    .as_object()
+                    .ok_or_else(|| anyhow::anyhow!("operator map expected for field '{field}'"))?;
+                for (opname, value) in ops_map {
+                    let op = Op::parse(opname)?;
+                    if op == Op::In && !value.is_array() {
+                        anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+                    }
+                    conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
+                }
+            }
+        }
+        _ => anyhow::bail!("filter must be a condition object, a {{field: op}} map, or an array of conditions"),
+    }
+    Ok(SrvFilter { conds })
+}
+
+fn scalar_text(v: &JVal) -> String {
+    match v {
+        JVal::String(s) => s.clone(),
+        JVal::Number(n) => n.to_string(),
+        JVal::Bool(b) => b.to_string(),
+        JVal::Null => String::new(),
+        _ => v.to_string(),
+    }
+}
+
+fn like_fragment(raw: &JVal) -> String {
+    let mut out = String::new();
+    for ch in scalar_text(raw).chars() {
+        if ch == '\\' || ch == '%' || ch == '_' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    format!("%{}%", out)
+}
+
+fn jval_from_value(v: Value) -> JVal {
+    match v {
+        Value::Null => JVal::Null,
+        Value::Integer(i) => JVal::from(i),
+        Value::Real(f) => JVal::from(f),
+        Value::Text(s) => JVal::String(s),
+        Value::Blob(b) => JVal::String(String::from_utf8_lossy(&b).to_string()),
+    }
+}
+
+pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Value>) {
+    let mut params = vec![Value::from(board_id)];
+    let mut parts = vec!["board_id = ?1".to_string()];
+    for c in conds {
+        let path_ph = params.len() + 1;
+        params.push(Value::from(c.field.clone()));
+        let cast_text = format!("CAST(json_extract(payload, ?{path_ph}) AS TEXT)");
+        let cast_num = format!("CAST(json_extract(payload, ?{path_ph}) AS REAL)");
+        let target = if c.value.is_number() { cast_num.clone() } else { cast_text.clone() };
+        let vp = params.len() + 1;
+        let frag = match c.op {
+            Op::Eq => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{cast_text} = ?{vp}")
+            }
+            Op::Ne => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{cast_text} <> ?{vp}")
+            }
+            Op::Gt => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{target} > ?{vp}")
+            }
+            Op::Gte => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{target} >= ?{vp}")
+            }
+            Op::Lt => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{target} < ?{vp}")
+            }
+            Op::Lte => {
+                params.push(Value::from(scalar_text(&c.value)));
+                format!("{target} <= ?{vp}")
+            }
+            Op::Contains => {
+                params.push(Value::from(like_fragment(&c.value)));
+                format!("{cast_text} LIKE ?{vp} ESCAPE '\\'")
+            }
+            Op::NotContains => {
+                params.push(Value::from(like_fragment(&c.value)));
+                format!("{cast_text} NOT LIKE ?{vp} ESCAPE '\\'")
+            }
+            Op::In => {
+                let arr = c.value.as_array().expect("validated in-value is an array");
+                let mut phs = Vec::new();
+                for el in arr {
+                    let p = params.len() + 1;
+                    params.push(Value::from(scalar_text(el)));
+                    phs.push(format!("?{p}"));
+                }
+                format!("{cast_text} IN ({})", phs.join(", "))
+            }
+        };
+        parts.push(frag);
+    }
+    (format!("{}", parts.join(" AND ")), params)
+}
+
+fn agg_target(agg: Agg, field: Option<&str>, params: &mut Vec<Value>) -> anyhow::Result<String> {
+    if agg == Agg::Count {
+        return Ok("COUNT(*)".to_string());
+    }
+    let f = field.ok_or_else(|| anyhow::anyhow!("--field <json path> is required for {agg:?}"))?;
+    let ph = params.len() + 1;
+    params.push(Value::from(f));
+    let name = match agg {
+        Agg::Sum => "SUM",
+        Agg::Avg => "AVG",
+        Agg::Min => "MIN",
+        Agg::Max => "MAX",
+        Agg::Count => unreachable!(),
+    };
+    Ok(format!("{name}(CAST(json_extract(payload, ?{ph}) AS REAL))"))
+}
+
+impl DbPool {
+    pub async fn srv_record_filter(
+        &self,
+        board_id: &str,
+        conds: &[FilterCond],
+        order: Option<(&str, bool)>,
+        limit: i64,
+    ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
+        let conn = self.conn().await;
+        let (where_sql, mut params) = srv_filter_where(board_id, conds);
+        let mut sql = format!("SELECT seq, payload, created_at FROM wb_records WHERE {where_sql}");
+        match order {
+            Some((field, desc)) => {
+                let op = params.len() + 1;
+                params.push(Value::from(field));
+                let dir = if desc { "DESC" } else { "ASC" };
+                sql.push_str(&format!(" ORDER BY json_extract(payload, ?{op}) {dir}"));
+            }
+            None => sql.push_str(" ORDER BY seq DESC"),
+        }
+        let limit = limit.clamp(1, 500);
+        let lp = params.len() + 1;
+        params.push(Value::from(limit));
+        sql.push_str(&format!(" LIMIT ?{lp}"));
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
+        let mut out = Vec::new();
+        while let Some(record) = crate::serverless::read_record(&mut rows).await? {
+            out.push(record);
+        }
+        Ok(out)
+    }
+
+    pub async fn srv_record_aggregate(
+        &self,
+        board_id: &str,
+        conds: &[FilterCond],
+        agg: Agg,
+        field: Option<&str>,
+        group_by: Option<&str>,
+    ) -> anyhow::Result<Vec<JVal>> {
+        let conn = self.conn().await;
+        let (where_sql, mut params) = srv_filter_where(board_id, conds);
+        let target = agg_target(agg, field, &mut params)?;
+        let sql = match group_by {
+            Some(g) => {
+                let gp1 = params.len() + 1;
+                params.push(Value::from(g));
+                let gp2 = params.len() + 1;
+                params.push(Value::from(g));
+                format!(
+                    "SELECT json_extract(payload, ?{gp1}) AS grp, {target} AS value \
+                     FROM wb_records WHERE {where_sql} GROUP BY json_extract(payload, ?{gp2}) ORDER BY 1"
+                )
+            }
+            None => format!(
+                "SELECT {target} AS value FROM wb_records WHERE {where_sql}"
+            ),
+        };
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next().await? {
+            if group_by.is_some() {
+                let grp = match row.get_value(0)? {
+                    Value::Null => JVal::Null,
+                    v => jval_from_value(v),
+                };
+                let value = match row.get_value(1)? {
+                    Value::Null => JVal::Null,
+                    v => jval_from_value(v),
+                };
+                out.push(serde_json::json!({ "group": grp, "value": value }));
+            } else {
+                let value = match row.get_value(0)? {
+                    Value::Null => JVal::Null,
+                    v => jval_from_value(v),
+                };
+                out.push(serde_json::json!({ "value": value }));
+            }
+        }
+        Ok(out)
+    }
+}

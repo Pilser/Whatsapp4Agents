@@ -3,21 +3,24 @@ use serde_json::{json, Value};
 use zw_core::{McpToolProvider, ToolOutput};
 use zw_whiteboard::{BoardState, WhiteboardHandle};
 
-const ACTIONS: &[&str] = &["list", "open", "close", "add", "delete", "move", "set-public", "show"];
+const ACTIONS: &[&str] = &["about", "list", "open", "close", "add", "delete", "move", "set-public", "show", "srv"];
 
 const PREVIEW_CHARS: usize = 600;
 
 const GLOBAL_USAGE: &str =
-    "usage: wb --session <session_id> <action> [args]\n\
-     actions:\n\
-       list\n\
-       open <page_no>\n\
-       close\n\
-       add [--title \"<title>\"]\n\
-       delete <page_no>\n\
-       move <from> to <to>\n\
-       set-public <page_no> on|off\n\
-       show <page_no>\n\
+    "wb --session <session_id> <action> [args]\n\
+     for the full per-command help, run: <action> --help\n\
+     actions (short):\n\
+       about             what the whiteboard is + how to build serverless apps\n\
+       list              list all pages, active page and lock state\n\
+       open <page_no>    set the active page and load it\n\
+       close             unlock the active page\n\
+       add [--title \"t\"] append a new page\n\
+       delete <page_no>  remove a page and renumber the rest\n\
+       move <from> to <to>  reorder pages\n\
+       set-public <page_no> on|off  publish a /w/<slug> snapshot\n\
+       show <page_no>    preview a page (first ~600 chars)\n\
+       srv apps|records|files <...>  manage serverless apps, data and files (see: srv --help)\n\
        --help | <action> --help\n";
 
 pub struct ManageWhiteboardProvider {
@@ -176,6 +179,18 @@ impl ManageWhiteboardProvider {
                     "note": "preview only — read the full body from the session's .wb file with your file tool if needed",
                 }))
             }
+            "about" => Ok(json!({ "status": "ok", "about": ABOUT_TEXT })),
+            "srv" => {
+                let db = self.handle.db().ok_or_else(|| err_json(
+                    "serverless store is unavailable (no whiteboard db configured)",
+                    raw, "srv <action>", "srv apps list",
+                ))?;
+                let dir = self.handle.dir().clone();
+                match crate::srv::execute_srv(&db, &dir, &sid, &rest, raw).await {
+                    Ok(v) => Ok(v),
+                    Err(e) => Err(e),
+                }
+            }
             other => Err(unknown_action(raw, other)),
         }
     }
@@ -235,17 +250,41 @@ fn unknown_action(raw: &str, action: &str) -> Value {
 
 fn action_help(action: &str) -> &'static str {
     match action {
+        "about" => "wb --session <sid> about\n\nprints what the whiteboard supports (markdown, mermaid, HTML/CSS/JS, pins, multi-page) and how to build a serverless app inside it. Run it first.\n",
         "list" => "wb --session <sid> list\n\nlists all pages, active_page and locked state\n",
-        "open" => "wb --session <sid> open <page_no>\n\nsets the agent's active page, locks it and loads its body into the .wb file\n",
+        "open" => "wb --session <sid> open <page_no>\n\nsets the agent's active page, locks it and loads its body into the session's .wb file\n",
         "close" => "wb --session <sid> close\n\nunlocks the active page so users can edit it\n",
         "add" => "wb --session <sid> add [--title \"<title>\"]\n\nappends a new page; returns its page_no\n",
         "delete" => "wb --session <sid> delete <page_no>\n\nremoves a page and renumbers the rest (fails if it is the locked active page)\n",
         "move" => "wb --session <sid> move <from> to <to>\n\nreorders pages by one-based position\n",
         "set-public" => "wb --session <sid> set-public <page_no> on|off\n\ntakes a frozen snapshot and publishes /w/<slug> (on) or removes it (off)\n",
         "show" => "wb --session <sid> show <page_no>\n\nprints page_no, total_pages, title and a short preview (first ~600 chars) — not the full body; read the .wb file for the rest\n",
+        "srv" => "wb --session <sid> srv <group> <verb> [args]\n\nthe serverless-app CLI: build and manage stateless apps + their data INSIDE a whiteboard, using only this MCP tool (no backend code, no shell tool).\ngroups:\n  apps   create --title \"t\" [--json <schema>] [--public-reads on|off] | list | show <id> | schema <id> | update <id> [--title] [--json|--clear-schema] [--public-reads] | delete <id>\n  records submit <id> <json> | list <id> [--limit N] | get <id> --seq N | query <id> '<$.path>' [--eq v] | count <id> | delete <id> [--seq N|--all]\n  files   list <id> | get <id> <file_id> --out <path>\nFor the full sub-command help run: srv <group> --help\n",
         _ => GLOBAL_USAGE,
     }
 }
+
+const ABOUT_TEXT: &str =
+    "The whiteboard is the live document the user sees. You manage it fully through this tool (wb ...) — never via the shell tool.\n\
+     \n\
+     Capabilities:\n\
+     - Full Markdown: headings, lists, tables, quotes, code blocks, links, images, task lists.\n\
+     - Mermaid diagrams (flowchart, sequence, gantt, class, er, etc.) rendered live.\n\
+     - Inline HTML + full CSS (styled widgets, cards, layouts).\n\
+     - Embedded <script> JavaScript that runs in the user's page (interactive logic, fetch calls).\n\
+     - Pins: attach files (images/docs) to a page.\n\
+     - Multi-page boards: wb --session <sid> add/open/close/delete/move, set-public for /w/<slug>.\n\
+     \n\
+     SERVERLESS APPS (no backend code — the API and DB schema are DATA, managed by this CLI):\n\
+     1. Put HTML/CSS/JS into a page (e.g. a <script> that calls the serverless API).\n\
+     2. Create the app: wb --session <sid> srv apps create --title \"My App\" --json '{\"type\":\"object\",\"properties\":{...}}' [--public-reads on]\n\
+        This returns a secret board_id and stores your JSON schema as validation data.\n\
+     3. The embedded JS writes data:   POST /api/srv/<board_id>/submit   (JSON, validated vs the schema)\n\
+        reads (if you set public-reads on): GET /api/srv/<board_id>/records\n\
+        uploads a file:                  POST /api/srv/<board_id>/upload (multipart or raw-body)\n\
+     4. You manage everything here:      wb --session <sid> srv apps|records|files ...\n\
+     \n\
+     Start: wb --session <sid> about | wb --session <sid> list | wb --session <sid> srv --help";
 
 fn common_prefix(a: &str, b: &str) -> usize {
     a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count()
@@ -314,7 +353,7 @@ impl McpToolProvider for ManageWhiteboardProvider {
     }
 
     fn description(&self) -> &str {
-        "CLI to manage the session whiteboard pages. Required: --session <session_id>. Actions: list, open <n>, close, add [--title], delete <n>, move <from> to <to>, set-public <n> on|off, show <n>. Use --help."
+        "CLI tool for the session whiteboard and the serverless apps embedded in it. Run CLI commands here (never the shell tool), e.g. wb --session <sid> <action> [--help]. Required: --session <session_id>. Start with 'wb --session <sid> about' or '--help' for the command list."
     }
 
     fn input_schema(&self) -> Value {
@@ -323,7 +362,7 @@ impl McpToolProvider for ManageWhiteboardProvider {
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "A CLI command like 'wb --session web.x list'"
+                    "description": "A CLI command to run inside this tool only (not the shell tool), e.g. 'wb --session web.x about' or 'wb --session web.x list'."
                 }
             },
             "required": ["command"]

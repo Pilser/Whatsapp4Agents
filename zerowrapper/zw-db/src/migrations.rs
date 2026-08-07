@@ -45,6 +45,27 @@ CREATE TABLE IF NOT EXISTS whiteboard_public_pages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_wb_public_session ON whiteboard_public_pages(session_id);
+
+CREATE TABLE IF NOT EXISTS wb_apps (
+    board_id      TEXT PRIMARY KEY,
+    owner_key     TEXT NOT NULL,
+    title         TEXT NOT NULL,
+    schema_json   TEXT,
+    public_reads  INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_wb_apps_owner ON wb_apps(owner_key);
+
+CREATE TABLE IF NOT EXISTS wb_records (
+    id          INTEGER PRIMARY KEY,
+    board_id    TEXT NOT NULL,
+    owner_key   TEXT NOT NULL,
+    seq         INTEGER NOT NULL,
+    payload     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_wb_records_board ON wb_records(board_id, seq);
+CREATE INDEX IF NOT EXISTS idx_wb_records_owner ON wb_records(owner_key);
 ";
 
 pub const MIGRATIONS: &[&str] = &[

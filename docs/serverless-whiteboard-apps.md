@@ -42,7 +42,9 @@ routes is in §4.
 ## 2. Session folder model (everything about a session in one place)
 
 Today `.wb` files are flat: `<workspace>/{sid}.wb`. We move to a per-session tree so a
-session's *everything* lives together, including app files:
+session's *everything* lives together, including app files. Legacy flat files are
+**migrated once** (renamed) into the session folder on first access — there is no
+fallback path anymore:
 
 ```
 <workspace>/sessions/{sid}/
@@ -103,7 +105,9 @@ and cross-session access impossible even though the API is public.
 ## 4. Generic route family (one handler, many routes)
 
 `POST /api/srv/{board_id}/submit` — **write** (public)
-- body: arbitrary JSON (≤ 64 KB); `201 { ok, id }` | `400` invalid/schema | `404` unknown.
+- body: arbitrary JSON (≤ 64 KB); validated against the board's stored `schema_json`
+  (the `jsonschema` crate, incl. `format` assertion) when present; `201 { ok, seq }` |
+  `400` invalid/schema-violation | `404` unknown.
 
 `GET /api/srv/{board_id}/records?limit=&before=` — **list** (public only if `public_reads=1`, else owner/agent only)
 - newest-first JSON array `[{ seq, payload, created_at }]`. Lets a board render its data.
@@ -111,9 +115,13 @@ and cross-session access impossible even though the API is public.
 `GET /api/srv/{board_id}/record/{seq}` — **single record** (same visibility as list)
 
 `POST /api/srv/{board_id}/upload` — **file upload** (public)
-- multipart `file` field; blob written to `sessions/{sid}/apps/{board_id}/files/{file_id}.bin`;
-  a record is inserted whose payload holds `{ file: "files/{file_id}.bin", name, type, size }`.
-  `201 { ok, file, id }`.
+- accepts **both** `multipart/form-data` (browser forms / `fetch` FormData — text fields plus
+  one file part, merged into the record payload) and **raw-body** (binary + `X-Filename`,
+  matching the existing `/api/upload`);
+- blob written to `sessions/{sid}/apps/{board_id}/files/{file_id}.bin`;
+  a record is inserted whose payload holds the form fields plus
+  `{ file: "files/{file_id}.bin", name, type, size }`.
+  `201 { ok, seq, file }`.
 
 `GET /api/srv/{board_id}/file/{file_id}` — **serve blob** (same visibility as list)
 - streams the stored file with its saved content-type.
@@ -229,6 +237,6 @@ a board owned by another session. A session can never reach another session's da
    (submit/records/record/upload/file), reusing the Store.
 6. **Doc** — this file.
 
-Dependencies: none new (SQLite/libSQL already present; multipart via the existing HTTP
-stack). Keep modules small — one concern per file, explicit imports, `cargo check` after
-edits.
+Dependencies: `jsonschema` (validation; `default-features = false` to avoid its reqwest/rustls
+defaults); multipart is hand-parsed; SQLite/libSQL already present. Keep modules small — one
+concern per file, explicit imports, `cargo check` after edits.
