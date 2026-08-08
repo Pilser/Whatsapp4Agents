@@ -7,42 +7,37 @@ use zw_db::DbPool;
 const USAGE: &str =
     "usage: srv <group> <verb> [args]\n\
      groups:\n\
-       apps\n\
-       records\n\
-files\n\
-      apps:\n\
-        srv apps create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
-        srv apps list\n\
-        srv apps show <board_id>\n\
-        srv apps schema <board_id>\n\
-        srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
-        srv apps delete <board_id>\n\
-        srv apps keys <board_id> list\n\
-        srv apps keys <board_id> issue --role writer|reader|admin [--writer <id>]\n\
-        srv apps keys <board_id> issue --role writer|reader|admin [--writer <id>]\n\
-         srv apps keys <board_id> revoke --bucket <bucket>\n\
-         srv apps hooks <board_id> register <url> [--secret <s>]\n\
-         srv apps hooks <board_id> list\n\
-         srv apps hooks <board_id> remove <url>\n\
-         srv apps hooks <board_id> deliveries [--url <u>]\n\
-         srv apps hooks <board_id> replay <url>\n\
-         srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>']\n\
-         srv apps ttl <board_id> --clear\n\
-         srv apps audit <board_id> on|off\n\
-      records:\n\
-        srv records submit <board_id> <json> [--writer <id>] [--upsert]\n\
-        srv records list <board_id> [--limit N] [--offset N]\n\
-        srv records get <board_id> --seq N\n\
-        srv records update <board_id> <seq> '<json>' [--writer <id>]\n\
-        srv records patch <board_id> <seq> '<ops>'\n\
-        srv records query <board_id> '<$.path>' [--eq value]\n\
-        srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
-        srv records search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
-        srv records count <board_id>\n\
-        srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
-        srv records delete <board_id> [--seq N | --all]\n\
-        srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\
-        srv records call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
+       apps      manage the app/board itself (create, schema, keys, hooks, rate, ttl, link, audit)\n\
+       records   read/write/search/aggregate the records, call external APIs\n\
+       files     list/download uploaded files\n\
+     \n\
+     apps:\n\
+       srv apps create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
+       srv apps list\n\
+       srv apps show <board_id>\n\
+       srv apps schema <board_id>\n\
+       srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
+       srv apps delete <board_id>\n\
+       srv apps keys <board_id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket>\n\
+       srv apps hooks <board_id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url>\n\
+       srv apps rate <board_id> '<{\"submit\":60,...}>' | srv apps rate <board_id> --clear\n\
+       srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>'] | srv apps ttl <board_id> --clear\n\
+       srv apps link <board_id> --on '$.k' --to <parent> --via '$.k' | srv apps link <board_id> --clear\n\
+       srv apps audit <board_id> on|off | srv apps audit <board_id> (list)\n\
+     records:\n\
+       srv records submit <board_id> <json> [--writer <id>] [--upsert]\n\
+       srv records list <board_id> [--limit N] [--offset N]\n\
+       srv records get <board_id> --seq N\n\
+       srv records update <board_id> <seq> '<json>' [--writer <id>]\n\
+       srv records patch <board_id> <seq> '<ops>'\n\
+       srv records query <board_id> '<$.path>' [--eq value]\n\
+       srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+       srv records search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
+       srv records count <board_id>\n\
+       srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
+       srv records delete <board_id> [--seq N | --all]\n\
+       srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\
+       srv records call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
      search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
@@ -64,6 +59,7 @@ const APPS_USAGE: &str =
      hooks <board_id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url>\n\
      rate <board_id> '<{\"submit\":60,...}>' | rate <board_id> --clear\n\
      ttl <board_id> [<seconds>] [--ttl-until '<$.path>'] | ttl <board_id> --clear\n\
+     link <board_id> --on '$.k' --to <parent> --via '$.k' | link <board_id> --clear\n\
      audit <board_id> on|off | audit <board_id> (list)\n";
 
 const RECORDS_USAGE: &str =

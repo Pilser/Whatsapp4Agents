@@ -250,7 +250,7 @@ fn unknown_action(raw: &str, action: &str) -> Value {
 
 fn action_help(action: &str) -> &'static str {
     match action {
-        "about" => "wb --session <sid> about\n\nprints what the whiteboard supports (markdown, mermaid, HTML/CSS/JS, pins, multi-page) and how to build a serverless app inside it. Run it first.\n",
+        "about" => "wb --session <sid> about\n\nprints the full capability summary: whiteboard features (markdown, mermaid, HTML/CSS/JS, pins, multi-page) and the complete serverless-app system (auth/keys, record CRUD + HTTP endpoints, outbound API calls, webhooks, TTL, joins, audit, rate limits, realtime). Run it first.\n",
         "list" => "wb --session <sid> list\n\nlists all pages, active_page and locked state\n",
         "open" => "wb --session <sid> open <page_no>\n\nsets the agent's active page, locks it and loads its body into the session's .wb file\n",
         "close" => "wb --session <sid> close\n\nunlocks the active page so users can edit it\n",
@@ -259,7 +259,7 @@ fn action_help(action: &str) -> &'static str {
         "move" => "wb --session <sid> move <from> to <to>\n\nreorders pages by one-based position\n",
         "set-public" => "wb --session <sid> set-public <page_no> on|off\n\ntakes a frozen snapshot and publishes /w/<slug> (on) or removes it (off)\n",
         "show" => "wb --session <sid> show <page_no>\n\nprints page_no, total_pages, title and a short preview (first ~600 chars) — not the full body; read the .wb file for the rest\n",
-        "srv" => "wb --session <sid> srv <group> <verb> [args]\n\nthe serverless-app CLI: build and manage stateless apps + their data INSIDE a whiteboard, using only this MCP tool (no backend code, no shell tool).\ngroups:\n  apps   create --title \"t\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>'] | list | show <id> | schema <id> | update <id> [--title] [--json|--clear-schema] [--public-reads] [--unique|--clear-unique] | delete <id> | keys <id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket> | hooks <id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url> | rate <id> '{\"submit\":60}' | rate <id> --clear | ttl <id> [<seconds>] [--ttl-until '<$.path>'] [--clear] | audit <id> on|off\n  records submit <id> <json> [--writer][--upsert] | list <id> [--limit N] | get <id> --seq N | update <id> <seq> <json> | patch <id> <seq> '{ops}' ($set/$inc/$dec/$mul/$unset) | query <id> --filter '<json>' [--order][--limit] | search <id> '<query>' [--limit N] (full-text BM25) | count <id> | aggregate <id> --op sum|avg|min|max|count --field '<$.path>' [--group_by][--filter] | delete <id> [--seq N|--all] | audit <id> [--since <iso-ts>] [--limit N] | call <id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n  files   list <id> | get <id> <file_id> --out <path>\nFor the full sub-command help run: srv <group> --help\n",
+        "srv" => "wb --session <sid> srv <group> <verb> [args]\n\nthe serverless-app CLI: build and manage stateless apps + their data INSIDE a whiteboard, using only this MCP tool (no backend code, no shell tool).\ngroups:\n  apps   create --title \"t\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>'] | list | show <id> | schema <id> | update <id> [--title] [--json|--clear-schema] [--public-reads] [--unique|--clear-unique] | delete <id> | keys <id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket> | hooks <id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url> | rate <id> '{\"submit\":60}' | rate <id> --clear | ttl <id> [<seconds>] [--ttl-until '<$.path>'] [--clear] | link <id> --on '$.k' --to <parent> --via '$.k' | link <id> --clear | audit <id> on|off\n  records submit <id> <json> [--writer][--upsert] | list <id> [--limit N] | get <id> --seq N | update <id> <seq> <json> | patch <id> <seq> '{ops}' ($set/$inc/$dec/$mul/$unset) | query <id> --filter '<json>' [--order][--limit] | search <id> '<query>' [--limit N] (full-text BM25) | count <id> | aggregate <id> --op sum|avg|min|max|count --field '<$.path>' [--group_by][--filter] | delete <id> [--seq N|--all] | audit <id> [--since <iso-ts>] [--limit N] | call <id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n  files   list <id> | get <id> <file_id> --out <path>\nFor the full sub-command help run: srv <group> --help\n",
         _ => GLOBAL_USAGE,
     }
 }
@@ -276,23 +276,49 @@ const ABOUT_TEXT: &str =
      - Multi-page boards: wb --session <sid> add/open/close/delete/move, set-public for /w/<slug>.\n\
      \n\
      SERVERLESS APPS (no backend code — the API and DB schema are DATA, managed by this CLI):\n\
-     1. Put HTML/CSS/JS into a page (e.g. a <script> that calls the serverless API).\n\
-     2. Create the app: wb --session <sid> srv apps create --title \"My App\" --json '{\"type\":\"object\",\"properties\":{...}}' [--public-reads on]\n\
-        This returns a secret board_id and stores your JSON schema as validation data.\n\
-3. The embedded JS writes data:   POST /api/srv/<board_id>/submit   (JSON, validated vs the schema)\n\
-        reads (if you set public-reads on):\n\
-          GET /api/srv/<board_id>/records                          all records\n\
-          GET /api/srv/<board_id>/records?q=<query>             full-text search (BM25-ranked, whole payload)\n\
-          GET /api/srv/<board_id>/records?filter=<json>         filter e.g. {\"price\":{\"gte\":500}}\n\
-          GET /api/srv/<board_id>/records?order=price&dir=asc&limit=10\n\
-          GET /api/srv/<board_id>/aggregate?op=sum&field=price&group_by=category&filter={...}\n\
-        uploads a file:                  POST /api/srv/<board_id>/upload (multipart or raw-body)\n\
-         mutating ops available to embedded JS:\n\
-           update a record:  PUT    /api/srv/<board_id>/records/<seq>   (full replace)\n\
-           patch a record:   PATCH  /api/srv/<board_id>/records/<seq>   ({\"$inc\":{\"votes\":1}, \"$set\":{\"title\":\"x\"}})\n\
-           submit with id:    POST   /api/srv/<board_id>/submit   (header X-Writer, or ?upsert=1 replaces duplicate unique-key records)\n\
-           unique keys:         CLI   srv apps create --unique '<$.path>'  prevents duplicates; upsert replaces instead.\n\
-      4. You manage everything here:      wb --session <sid> srv apps|records|files ... (run 'srv --help')\n\
+     Everything below is also visible in 'wb --session <sid> srv --help' (and 'srv apps --help' / 'srv records --help').\n\
+     \n\
+     1. Build the app: put HTML/CSS/JS into a page, then create the backend as data:\n\
+        wb --session <sid> srv apps create --title \"My App\" --json '{\"type\":\"object\",\"properties\":{...}}' [--public-reads on] [--unique '<$.path>']\n\
+        -> returns a secret board_id + stores your JSON schema (records are validated against it).\n\
+        Unique key (--unique '<$.path>'): extra submit with the same value is rejected unless ?upsert=1, which replaces keeping its seq.\n\
+     \n\
+     2. Auth model: every /api/srv/<board_id>/... request is authorized with 'Authorization: Bearer <token>'.\n\
+        - The board_id itself is the admin token (create/configure everything).\n\
+        - Issue scoped keys (reader/writer/admin): POST /api/srv/<board_id>/keys  or  srv apps keys <board_id> issue --role writer\n\
+          reader can read (incl. private boards), writer can submit/patch, admin manages config. Revoke via srv apps keys revoke --bucket <bucket>.\n\
+        - Rate limiting: per-action windows (submit/upload/search/read) + daily cap; admin configures via srv apps rate, enforced with 429 + Retry-After.\n\
+     \n\
+     3. Record CRUD over HTTP (validated vs schema):\n\
+        write:  POST   /api/srv/<board_id>/submit            (JSON; header X-Writer, or ?upsert=1)\n\
+                PUT    /api/srv/<board_id>/records/<seq>     (full replace)\n\
+                PATCH  /api/srv/<board_id>/records/<seq>     ({\"$inc\":{\"votes\":1},\"$set\":{\"a\":1},\"$unset\":[...]})\n\
+                DELETE /api/srv/<board_id>/records/<seq>\n\
+        read (public-reads or any key):\n\
+                GET /api/srv/<board_id>/records?limit=&offset=   all records\n\
+                GET /api/srv/<board_id>/records?q=<query>        full-text search (BM25-ranked, whole payload)\n\
+                GET /api/srv/<board_id>/records?filter=<json>    filter e.g. {\"price\":{\"gte\":500}} (ops: eq neq gt gte lt lte contains not_contains in search)\n\
+                GET /api/srv/<board_id>/records?order=<path>&dir=asc&limit=10\n\
+                GET /api/srv/<board_id>/aggregate?op=sum&field=<path>&group_by=<path>&filter={...}\n\
+                GET /api/srv/<board_id>/record?seq=N\n\
+        files:\n\
+                POST /api/srv/<board_id>/upload   (multipart or raw body; up to 25MB) -> {\"file\":\"files/<id>.bin\"}\n\
+                GET  /api/srv/<board_id>/file?file=files/<id>.bin   (downloads; stored per-session under sessions/<owner>/apps/<board>/files)\n\
+        realtime:\n\
+                GET  /api/srv/<board_id>/ws   (WebSocket; Bearer token; streams record.created/updated/deleted, catch-up after connect)\n\
+     \n\
+     4. Call external APIs and read the response (connect to API providers/sensors):\n\
+        POST /api/srv/<board_id>/call   body {\"url\":\"https://...\",\"method\":\"GET|POST|PUT|PATCH|DELETE\",\"headers\":{...},\"body\":{...},\"timeout_ms\":N}\n\
+        -> {status, headers, body, duration_ms}. Private/loopback targets are blocked (SSRF guard).\n\
+        Same via CLI:  srv records call <board_id> <url> [--method ...] [--header 'K: V']* [--body '<json>'] [--timeout N]\n\
+     \n\
+     5. Integrations (all admin, via CLI):\n\
+        webhooks: srv apps hooks <board_id> register <url> [--secret <s>]   -> record events POSTed to the url (HMAC X-WAOS-Signature); inspect/replay via deliveries|replay.\n\
+        ttl:      srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>']   -> records auto-expire by age and/or a timestamp field.\n\
+        joins:    srv apps link <board_id> --on '$.k' --to <parent_board> --via '$.k'   -> child records embed the parent's payload (GET /join).\n\
+        audit:    srv apps audit <board_id> on|off   -> immutable log of created/updated/deleted events (who/when/payload-hash); read via srv records audit.\n\
+     \n\
+     6. You manage everything here:  wb --session <sid> srv apps|records|files ...  (run 'srv --help' for the full command list).\n\
      \n\
      Start: wb --session <sid> about | wb --session <sid> list | wb --session <sid> srv --help";
 
