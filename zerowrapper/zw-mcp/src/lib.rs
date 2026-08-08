@@ -2,6 +2,7 @@ pub mod protocol;
 pub mod dispatch;
 pub mod manage_whiteboard;
 pub mod srv;
+pub mod srv_help;
 
 use crate::dispatch::McpProviders;
 

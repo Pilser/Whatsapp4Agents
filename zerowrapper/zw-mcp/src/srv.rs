@@ -204,6 +204,17 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": APPS_USAGE }));
     }
+    if args.first().map(|s| s.as_str()) == Some("--help") {
+        if let Some(h) = crate::srv_help::verb_help("apps", verb) {
+            return Ok(json!({ "status": "ok", "help": h }));
+        }
+        return Err(err_json(
+            &format!("no detailed help for 'srv apps {verb}'"),
+            raw,
+            "srv apps <verb>",
+            APPS_USAGE,
+        ));
+    }
     match verb {
         "create" => {
             let title = joined_flag(args, "--title").unwrap_or_else(|| "Untitled".to_string());
@@ -579,6 +590,17 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": RECORDS_USAGE }));
     }
+    if args.first().map(|s| s.as_str()) == Some("--help") {
+        if let Some(h) = crate::srv_help::verb_help("records", verb) {
+            return Ok(json!({ "status": "ok", "help": h }));
+        }
+        return Err(err_json(
+            &format!("no detailed help for 'srv records {verb}'"),
+            raw,
+            "srv records <verb>",
+            RECORDS_USAGE,
+        ));
+    }
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv records <verb>", "srv records list"))?;
@@ -873,6 +895,17 @@ async fn cmd_audit_records(db: &DbPool, board_id: &str, owner: &str, rest: &[&St
 async fn cmd_files(db: &DbPool, dir: &Path, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": FILES_USAGE }));
+    }
+    if args.first().map(|s| s.as_str()) == Some("--help") {
+        if let Some(h) = crate::srv_help::verb_help("files", verb) {
+            return Ok(json!({ "status": "ok", "help": h }));
+        }
+        return Err(err_json(
+            &format!("no detailed help for 'srv files {verb}'"),
+            raw,
+            "srv files <verb>",
+            FILES_USAGE,
+        ));
     }
     let board_id = args
         .first()
