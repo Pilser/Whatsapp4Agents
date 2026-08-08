@@ -42,6 +42,7 @@ files\n\
         srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
         srv records delete <board_id> [--seq N | --all]\n\
         srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\
+        srv records call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
      search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
@@ -79,6 +80,7 @@ const RECORDS_USAGE: &str =
      aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
      delete <board_id> [--seq N | --all]\n\
      audit <board_id> [--since <iso-ts>] [--limit N]\n\
+     call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
      query <path> uses JSONPath: '<$.name>', '<$.a.b>', '<$.arr[0]>' (leading $ required).\n\
      patch json: {\"$set\":{\"color\":\"black\"},\"$inc\":{\"votes\":1},\"$dec\":{...},\"$mul\":{...},\"$unset\":[\"field\",\"a.b[0]\"]}\n\
      writer filter form: {\"writer\":{\"eq\":\"alice\"}}\n\
@@ -159,6 +161,19 @@ fn joined_flag(args: &[&String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Collect every value that follows a repeatable flag (e.g. `--header 'A: 1' --header 'B: 2'`).
+fn all_flags(args: &[&String], flag: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (i, tok) in args.iter().enumerate() {
+        if tok.as_str() == flag {
+            if let Some(v) = args.get(i + 1) {
+                out.push(unquote(v));
+            }
+        }
+    }
+    out
 }
 
 fn public_mode(args: &[&String], raw: &str, verb: &str) -> Result<bool, Value> {
@@ -575,6 +590,26 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
     let rest = &args[1..];
     match verb {
         "audit" => cmd_audit_records(db, board_id, &app.owner_key, rest, raw).await,
+        "call" => {
+            let url = rest
+                .iter()
+                .take_while(|t| !t.starts_with("--"))
+                .map(|v| unquote(v))
+                .find(|u| !u.is_empty())
+                .ok_or_else(|| err_json("missing <url>", raw, "srv records call <board_id> <url>", "srv records call <board_id> https://api.example.com/x"))?;
+            let method = val_after(rest, "--method").unwrap_or_else(|| "GET".to_string());
+            let headers: Vec<(String, String)> = all_flags(rest, "--header")
+                .into_iter()
+                .filter_map(|h| h.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+                .collect();
+            let body = joined_flag(rest, "--body");
+            let timeout_ms: u64 = val_after(rest, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(0);
+            let res = db
+                .srv_http_call(board_id, &app.owner_key, &method, &url, &headers, body.as_deref(), timeout_ms)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv records call", "srv records call <board_id> <url>"))?;
+            Ok(json!({ "status": "ok", "call": res }))
+        }
         "submit" => {
             if rest.is_empty() {
                 return Err(err_json(

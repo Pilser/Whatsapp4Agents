@@ -892,6 +892,75 @@ pub async fn srv_hooks_remove(cx: &Cx) -> Result<Response> {
     }
 }
 
+#[route(POST "/api/srv/{board_id}/call")]
+pub async fn srv_call(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+
+    let identity = match authorize_identity(cx, ctx, board_id).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "authorization required"})))
+        }
+        Err(resp) => return Ok(resp),
+    };
+    let is_admin = match &identity {
+        SrvIdentity::LegacyAdmin => true,
+        SrvIdentity::AppKey { role, .. } => role == "admin",
+    };
+    if !is_admin {
+        return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
+    }
+
+    let app = match ctx.db.srv_app_by_id(board_id).await {
+        Ok(Some(app)) => app,
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    };
+
+    let body_bytes = match to_bytes(body, 1_000_000).await {
+        Ok(b) => b,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+    let req: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(v) => v,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+
+    let url = match req.get("url").and_then(|u| u.as_str()) {
+        Some(u) if !u.is_empty() => u.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing url"}))),
+    };
+    let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("GET").to_string();
+    let headers: Vec<(String, String)> = match req.get("headers").and_then(|h| h.as_object()) {
+        Some(map) => map.iter().filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string()))).collect(),
+        None => Vec::new(),
+    };
+    let body_str = match req.get("body") {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(v) => Some(v.to_string()),
+        None => None,
+    };
+    let timeout_ms = req.get("timeout_ms").and_then(|t| t.as_u64()).unwrap_or(0);
+
+    match ctx
+        .db
+        .srv_http_call(board_id, &app.owner_key, &method, &url, &headers, body_str.as_deref(), timeout_ms)
+        .await
+    {
+        Ok(res) => Ok(json_response(
+            StatusCode::OK,
+            serde_json::json!({
+                "ok": true,
+                "status": res.status,
+                "duration_ms": res.duration_ms,
+                "headers": res.headers,
+                "body": res.body,
+            }),
+        )),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
 #[route(POST "/api/srv/{board_id}/rate")]
 pub async fn srv_rate_config(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);

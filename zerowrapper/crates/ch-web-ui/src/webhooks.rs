@@ -27,36 +27,8 @@ fn fmt_iso(now: &NaiveDateTime) -> String {
     now.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-fn private_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-                || v4.is_broadcast()
-        }
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unicast_link_local()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-        }
-    }
-}
-
 fn ssrf_blocked(url: &str) -> bool {
-    let Ok(parsed) = url.parse::<reqwest::Url>() else {
-        return true;
-    };
-    let Some(host) = parsed.host_str() else {
-        return true;
-    };
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return private_ip(ip);
-    }
-    host.to_lowercase() == "localhost"
+    !zw_db::netguard::valid_url(url)
 }
 
 fn next_attempt(attempts: i64, now: &NaiveDateTime) -> Option<String> {
