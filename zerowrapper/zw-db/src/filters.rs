@@ -135,6 +135,21 @@ fn parse_cond_obj(v: &JVal) -> anyhow::Result<Vec<FilterCond>> {
             .ok_or_else(|| anyhow::anyhow!("a condition needs \"field\" (json path)"))?,
     );
     let mut out = Vec::new();
+    if let Some(opname) = obj.get("op").and_then(|o| o.as_str()) {
+        let value = obj
+            .get("value")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("an operator on field '{field}' needs a \"value\""))?;
+        let op = Op::parse(opname)?;
+        if op == Op::In && !value.is_array() {
+            anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+        }
+        if op == Op::Search && !value.is_string() {
+            anyhow::bail!("operator \"search\" needs a string query");
+        }
+        out.push(FilterCond { field, op, value });
+        return Ok(out);
+    }
     for (k, value) in obj {
         if k == "field" {
             continue;
@@ -152,6 +167,28 @@ fn parse_cond_obj(v: &JVal) -> anyhow::Result<Vec<FilterCond>> {
         anyhow::bail!("condition for '{field}' has no operators");
     }
     Ok(out)
+}
+
+fn push_ops(conds: &mut Vec<FilterCond>, field: &str, ops: &JVal) -> anyhow::Result<()> {
+    let field = normalize_path(field);
+    match ops {
+        JVal::Object(map) => {
+            for (opname, value) in map {
+                let op = Op::parse(opname)?;
+                if op == Op::In && !value.is_array() {
+                    anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
+                }
+                if op == Op::Search && !value.is_string() {
+                    anyhow::bail!("operator \"search\" needs a string query");
+                }
+                conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
+            }
+        }
+        other => {
+            conds.push(FilterCond { field, op: Op::Eq, value: other.clone() });
+        }
+    }
+    Ok(())
 }
 
 pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
@@ -175,38 +212,12 @@ pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
                 if field == "search" {
                     continue;
                 }
-                let field = normalize_path(field);
-                let ops_map = ops
-                    .as_object()
-                    .ok_or_else(|| anyhow::anyhow!("operator map expected for field '{field}'"))?;
-                for (opname, value) in ops_map {
-                    let op = Op::parse(opname)?;
-                    if op == Op::In && !value.is_array() {
-                        anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
-                    }
-                    if op == Op::Search && !value.is_string() {
-                        anyhow::bail!("operator \"search\" needs a string query");
-                    }
-                    conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
-                }
+                push_ops(&mut conds, field, ops)?;
             }
         }
         JVal::Object(obj) => {
             for (field, ops) in obj {
-                let field = normalize_path(field);
-                let ops_map = ops
-                    .as_object()
-                    .ok_or_else(|| anyhow::anyhow!("operator map expected for field '{field}'"))?;
-                for (opname, value) in ops_map {
-                    let op = Op::parse(opname)?;
-                    if op == Op::In && !value.is_array() {
-                        anyhow::bail!("operator \"in\" on field '{field}' needs an array value");
-                    }
-                    if op == Op::Search && !value.is_string() {
-                        anyhow::bail!("operator \"search\" needs a string query");
-                    }
-                    conds.push(FilterCond { field: field.clone(), op, value: value.clone() });
-                }
+                push_ops(&mut conds, field, ops)?;
             }
         }
         _ => anyhow::bail!("filter must be a condition object, a {{field: op}} map, or an array of conditions"),
@@ -327,11 +338,11 @@ pub fn srv_filter_where(board_id: &str, conds: &[FilterCond]) -> (String, Vec<Va
             }
             Op::Contains => {
                 params.push(Value::from(like_fragment(&c.value)));
-                format!("{cast_text} LIKE ?{vp} ESCAPE '\\'")
+                format!("LOWER({cast_text}) LIKE LOWER(?{vp}) ESCAPE '\\'")
             }
             Op::NotContains => {
                 params.push(Value::from(like_fragment(&c.value)));
-                format!("{cast_text} NOT LIKE ?{vp} ESCAPE '\\'")
+                format!("LOWER({cast_text}) NOT LIKE LOWER(?{vp}) ESCAPE '\\'")
             }
             Op::In => {
                 let arr = c.value.as_array().expect("validated in-value is an array");

@@ -229,6 +229,7 @@ impl DbPool {
             },
             None => anyhow::bail!("board {board_id} not found"),
         }
+        drop(rows);
         let mut sets: Vec<String> = Vec::new();
         if let Some(t) = title {
             sets.push(format!("title = '{}'", sq(t)));
@@ -273,6 +274,7 @@ impl DbPool {
         if !is_owner {
             anyhow::bail!("board {board_id} is not owned by {owner}");
         }
+        drop(rows);
         let b = sq(board_id);
         let o = sq(owner);
         let sql = format!(
@@ -637,17 +639,28 @@ fn apply_patch_ops(target: &mut serde_json::Value, ops: &serde_json::Value) -> a
     Ok(())
 }
 
+fn int_json(n: f64) -> serde_json::Number {
+    if n.fract() == 0.0 && n >= 0.0 {
+        serde_json::Number::from(n as u64)
+    } else if n.fract() == 0.0 {
+        serde_json::Number::from(n as i64)
+    } else {
+        serde_json::Number::from_f64(n).expect("finite")
+    }
+}
+
 fn apply_arith(target: &mut serde_json::Value, value: &serde_json::Value, sign: f64) -> anyhow::Result<()> {
     let fields = value.as_object().ok_or_else(|| anyhow::anyhow!("$inc/$dec requires an object of {{path: delta}}"))?;
     for (path, delta) in fields {
-        let d = match (delta.as_f64(), sign) {
-            (Some(d), s) => d * s,
+        let d = match delta.as_f64() {
+            Some(d) => d,
             _ => anyhow::bail!("$inc/$dec delta for '{path}' must be a number"),
         };
         let segs = crate::filters::path_items(path).ok_or_else(|| anyhow::anyhow!("invalid path '{path}'"))?;
-        let cur = value_at_path(target, path).cloned().unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
-        let base = cur.as_f64().unwrap_or(0.0);
-        set_path(target, segs, serde_json::json!(base + d))?;
+        let cur = value_at_path(target, path).cloned()
+            .unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
+        let base = cur.as_f64().unwrap_or(0.0) + sign * d;
+        set_path(target, segs, serde_json::Value::Number(int_json(base)))?;
     }
     Ok(())
 }
@@ -658,10 +671,11 @@ fn apply_mul(target: &mut serde_json::Value, value: &serde_json::Value) -> anyho
         let f = factor
             .as_f64()
             .ok_or_else(|| anyhow::anyhow!("$mul factor for '{path}' must be a number"))?;
-        let cur = value_at_path(target, path).cloned().unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
+        let cur = value_at_path(target, path).cloned()
+            .unwrap_or(serde_json::Value::Number(serde_json::Number::from(0)));
         let base = cur.as_f64().unwrap_or(0.0);
         let segs = crate::filters::path_items(path).ok_or_else(|| anyhow::anyhow!("invalid path '{path}'"))?;
-        set_path(target, segs, serde_json::json!(base * f))?;
+        set_path(target, segs, serde_json::Value::Number(int_json(base * f)))?;
     }
     Ok(())
 }
