@@ -166,6 +166,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_whiteboard(whiteboard.clone())
     .with_mcp(mcp.providers());
+    let _webhook_worker = ch_web_ui::webhooks::spawn_webhook_worker(db.clone());
+    let _ttl_worker = ch_web_ui::ttl_sweeper::spawn_ttl_sweeper(db.clone(), std::time::Duration::from_secs(30));
     let ui_handle = tokio::spawn(async move {
         if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);

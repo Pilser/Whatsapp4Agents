@@ -9,3 +9,4 @@ pub mod public_wb;
 pub mod mcp;
 pub mod multipart;
 pub mod serverless;
+pub mod serverless_ws;

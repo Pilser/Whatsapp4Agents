@@ -386,8 +386,11 @@ impl DbPool {
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
-        let conn = self.conn().await;
         let (where_sql, mut params, search_ph) = srv_filter_where(board_id, conds);
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND {where_sql}"),
+            None => where_sql,
+        };
         let mut sql = format!("SELECT seq, payload, created_at, writer FROM wb_records WHERE {where_sql}");
         match order {
             Some((field, desc)) => {
@@ -410,6 +413,7 @@ impl DbPool {
             params.push(Value::from(offset));
             sql.push_str(&format!(" OFFSET ?{op}"));
         }
+        let conn = self.conn().await;
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = crate::serverless::read_record(&mut rows).await? {
@@ -427,10 +431,13 @@ impl DbPool {
         offset: i64,
         snippet: bool,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
-        let conn = self.conn().await;
         let mut all = conds.to_vec();
         all.push(FilterCond { field: "_".to_string(), op: Op::Search, value: JVal::String(query.to_string()) });
         let (where_sql, mut params, search_ph) = srv_filter_where(board_id, &all);
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND {where_sql}"),
+            None => where_sql,
+        };
         let q = search_ph.ok_or_else(|| anyhow::anyhow!("search query could not be bound"))?;
         let limit = limit.clamp(1, 500);
         let lp = params.len() + 1;
@@ -444,6 +451,7 @@ impl DbPool {
             params.push(Value::from(offset));
             sql.push_str(&format!(" OFFSET ?{op}"));
         }
+        let conn = self.conn().await;
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = crate::serverless::read_record_scored(&mut rows).await? {
@@ -466,8 +474,11 @@ impl DbPool {
         field: Option<&str>,
         group_by: Option<&str>,
     ) -> anyhow::Result<Vec<JVal>> {
-        let conn = self.conn().await;
         let (where_sql, mut params, _search_ph) = srv_filter_where(board_id, conds);
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND {where_sql}"),
+            None => where_sql,
+        };
         let target = agg_target(agg, field, &mut params)?;
         let sql = match group_by {
             Some(g) => {
@@ -484,6 +495,7 @@ impl DbPool {
                 "SELECT {target} AS value FROM wb_records WHERE {where_sql}"
             ),
         };
+        let conn = self.conn().await;
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(row) = rows.next().await? {

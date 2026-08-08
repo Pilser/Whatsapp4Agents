@@ -388,6 +388,8 @@ impl DbPool {
              COMMIT;"
         );
         conn.execute_batch(&sql).await?;
+        drop(conn);
+        self.srv_audit_append(board_id, "created", None, writer, Some(&crate::audit::audit_hash(payload))).await?;
         Ok(seq)
     }
 
@@ -417,6 +419,8 @@ impl DbPool {
             Params::Positional(vec![]),
         )
         .await?;
+        drop(conn);
+        self.srv_audit_append(board_id, "updated", None, writer, Some(&crate::audit::audit_hash(payload))).await?;
         Ok(())
     }
 
@@ -477,6 +481,8 @@ impl DbPool {
             Params::Positional(vec![]),
         )
         .await?;
+        drop(conn);
+        self.srv_audit_append(board_id, "updated", None, current.writer.as_deref(), Some(&crate::audit::audit_hash(&merged))).await?;
         Ok(merged)
     }
 
@@ -485,30 +491,40 @@ impl DbPool {
     }
 
     pub async fn srv_record_list(&self, board_id: &str, limit: i64, before: Option<i64>, offset: i64) -> anyhow::Result<Vec<SrvRecord>> {
-        let conn = self.conn().await;
         let limit = limit.clamp(1, 200);
         let offset = offset.max(0);
-        let mut params;
+        let mut params = vec![Value::from(board_id)];
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND board_id = ?1"),
+            None => "board_id = ?1".to_string(),
+        };
         let sql = match before {
             Some(b) => {
-                params = vec![Value::from(board_id), Value::Integer(b), Value::Integer(limit)];
+                let bp = params.len() + 1;
+                params.push(Value::Integer(b));
+                let lp = params.len() + 1;
+                params.push(Value::Integer(limit));
                 if offset > 0 {
+                    let op = params.len() + 1;
                     params.push(Value::Integer(offset));
-                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3 OFFSET ?4")
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} AND seq < ?{bp} ORDER BY seq DESC LIMIT ?{lp} OFFSET ?{op}")
                 } else {
-                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3")
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} AND seq < ?{bp} ORDER BY seq DESC LIMIT ?{lp}")
                 }
             }
             None => {
-                params = vec![Value::from(board_id), Value::Integer(limit)];
+                let lp = params.len() + 1;
+                params.push(Value::Integer(limit));
                 if offset > 0 {
+                    let op = params.len() + 1;
                     params.push(Value::Integer(offset));
-                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC LIMIT ?2 OFFSET ?3")
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} ORDER BY seq DESC LIMIT ?{lp} OFFSET ?{op}")
                 } else {
-                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC LIMIT ?2")
+                    format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} ORDER BY seq DESC LIMIT ?{lp}")
                 }
             }
         };
+        let conn = self.conn().await;
         let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = read_record(&mut rows).await? {
@@ -518,12 +534,15 @@ impl DbPool {
     }
 
     pub async fn srv_record_count(&self, board_id: &str) -> anyhow::Result<i64> {
+        let mut params = vec![Value::from(board_id)];
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND board_id = ?1"),
+            None => "board_id = ?1".to_string(),
+        };
+        let sql = format!("SELECT COUNT(*) FROM wb_records WHERE {where_sql}");
         let conn = self.conn().await;
         let mut rows = conn
-            .query(
-                "SELECT COUNT(*) FROM wb_records WHERE board_id = ?1",
-                Params::Positional(vec![Value::from(board_id)]),
-            )
+            .query(&sql, Params::Positional(params))
             .await?;
         match rows.next().await? {
             Some(row) => match row.get_value(0)? {
@@ -535,18 +554,23 @@ impl DbPool {
     }
 
     pub async fn srv_record_query(&self, board_id: &str, json_path: &str, eq: Option<&str>) -> anyhow::Result<Vec<SrvRecord>> {
-        let conn = self.conn().await;
-        let (sql, params) = match eq {
-            Some(v) => (
-                format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 AND CAST(json_extract(payload, ?2) AS TEXT) = ?3 ORDER BY seq DESC"),
-                Params::Positional(vec![Value::from(board_id), Value::from(json_path), Value::from(v)]),
-            ),
-            None => (
-                format!("SELECT {RECORD_COLS} FROM wb_records WHERE board_id = ?1 ORDER BY seq DESC"),
-                Params::Positional(vec![Value::from(board_id)]),
-            ),
+        let mut params = vec![Value::from(board_id)];
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND board_id = ?1"),
+            None => "board_id = ?1".to_string(),
         };
-        let mut rows = conn.query(&sql, params).await?;
+        let where_sql = if let Some(v) = eq {
+            let pp = params.len() + 1;
+            params.push(Value::from(json_path));
+            let vp = params.len() + 1;
+            params.push(Value::from(v));
+            format!("{where_sql} AND CAST(json_extract(payload, ?{pp}) AS TEXT) = ?{vp}")
+        } else {
+            where_sql
+        };
+        let sql = format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} ORDER BY seq DESC");
+        let conn = self.conn().await;
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
         let mut out = Vec::new();
         while let Some(record) = read_record(&mut rows).await? {
             out.push(record);
@@ -573,6 +597,41 @@ impl DbPool {
             }
         }
         Ok(())
+    }
+
+    /// Deletes a single record, returning whether a row was actually removed.
+    pub async fn srv_record_delete_one(&self, board_id: &str, seq: i64) -> anyhow::Result<bool> {
+        let conn = self.conn().await;
+        let affected = conn
+            .execute(
+                "DELETE FROM wb_records WHERE board_id = ?1 AND seq = ?2",
+                Params::Positional(vec![Value::from(board_id), Value::Integer(seq)]),
+            )
+            .await?;
+        if affected > 0 {
+            drop(conn);
+            self.srv_audit_append(board_id, "deleted", None, None, None).await?;
+        }
+        Ok(affected > 0)
+    }
+
+    /// Returns every record with `seq > after_seq` in ascending order (capped).
+    pub async fn srv_records_after(&self, board_id: &str, after_seq: i64) -> anyhow::Result<Vec<SrvRecord>> {
+        let mut params = vec![Value::from(board_id)];
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND board_id = ?1"),
+            None => "board_id = ?1".to_string(),
+        };
+        let sp = params.len() + 1;
+        params.push(Value::Integer(after_seq));
+        let sql = format!("SELECT {RECORD_COLS} FROM wb_records WHERE {where_sql} AND seq > ?{sp} ORDER BY seq ASC LIMIT 1000");
+        let conn = self.conn().await;
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
+        let mut out = Vec::new();
+        while let Some(record) = read_record(&mut rows).await? {
+            out.push(record);
+        }
+        Ok(out)
     }
 }
 

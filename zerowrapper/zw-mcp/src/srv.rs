@@ -17,6 +17,18 @@ files\n\
         srv apps schema <board_id>\n\
         srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
         srv apps delete <board_id>\n\
+        srv apps keys <board_id> list\n\
+        srv apps keys <board_id> issue --role writer|reader|admin [--writer <id>]\n\
+        srv apps keys <board_id> issue --role writer|reader|admin [--writer <id>]\n\
+         srv apps keys <board_id> revoke --bucket <bucket>\n\
+         srv apps hooks <board_id> register <url> [--secret <s>]\n\
+         srv apps hooks <board_id> list\n\
+         srv apps hooks <board_id> remove <url>\n\
+         srv apps hooks <board_id> deliveries [--url <u>]\n\
+         srv apps hooks <board_id> replay <url>\n\
+         srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>']\n\
+         srv apps ttl <board_id> --clear\n\
+         srv apps audit <board_id> on|off\n\
       records:\n\
         srv records submit <board_id> <json> [--writer <id>] [--upsert]\n\
         srv records list <board_id> [--limit N] [--offset N]\n\
@@ -29,6 +41,7 @@ files\n\
         srv records count <board_id>\n\
         srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
         srv records delete <board_id> [--seq N | --all]\n\
+        srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
      search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
@@ -45,7 +58,12 @@ const APPS_USAGE: &str =
      show <board_id>\n\
      schema <board_id>\n\
      update <board_id> [--title \"t\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
-     delete <board_id>\n";
+     delete <board_id>\n\
+     keys <board_id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket>\n\
+     hooks <board_id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url>\n\
+     rate <board_id> '<{\"submit\":60,...}>' | rate <board_id> --clear\n\
+     ttl <board_id> [<seconds>] [--ttl-until '<$.path>'] | ttl <board_id> --clear\n\
+     audit <board_id> on|off | audit <board_id> (list)\n";
 
 const RECORDS_USAGE: &str =
     "srv records <verb> [args]\n\
@@ -60,6 +78,7 @@ const RECORDS_USAGE: &str =
      count <board_id>\n\
      aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
      delete <board_id> [--seq N | --all]\n\
+     audit <board_id> [--since <iso-ts>] [--limit N]\n\
      query <path> uses JSONPath: '<$.name>', '<$.a.b>', '<$.arr[0]>' (leading $ required).\n\
      patch json: {\"$set\":{\"color\":\"black\"},\"$inc\":{\"votes\":1},\"$dec\":{...},\"$mul\":{...},\"$unset\":[\"field\",\"a.b[0]\"]}\n\
      writer filter form: {\"writer\":{\"eq\":\"alice\"}}\n\
@@ -266,6 +285,276 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps delete", "srv apps delete <board_id>"))?;
             Ok(json!({ "status": "ok", "deleted": true }))
         }
+        "keys" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps keys <board_id> <verb>", "srv apps keys <board_id> list")
+            })?;
+            let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
+            let rest = &args[2..];
+            match sub {
+                "list" => {
+                    require_board(db, board_id, sid, raw).await?;
+                    let keys = db
+                        .srv_key_list(board_id, sid)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys list", "srv apps keys <board_id> list"))?;
+                    let keys: Vec<Value> = keys
+                        .iter()
+                        .map(|k| json!({
+                            "bucket": k.bucket,
+                            "role": k.role,
+                            "writer": k.writer,
+                            "created_at": k.created_at,
+                            "revoked": k.revoked_at,
+                        }))
+                        .collect();
+                    Ok(json!({ "status": "ok", "keys": keys }))
+                }
+                "issue" => {
+                    require_board(db, board_id, sid, raw).await?;
+                    let role = val_after(rest, "--role").unwrap_or_else(|| "writer".to_string());
+                    let writer = joined_flag(rest, "--writer");
+                    let (bucket, secret) = db
+                        .srv_key_issue(board_id, sid, &role, writer.as_deref())
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys issue", "srv apps keys <board_id> issue --role writer"))?;
+                    Ok(json!({ "status": "ok", "key": secret, "bucket": bucket }))
+                }
+                "revoke" => {
+                    require_board(db, board_id, sid, raw).await?;
+                    let bucket = val_after(rest, "--bucket").ok_or_else(|| {
+                        err_json(
+                            "missing --bucket <bucket>",
+                            raw,
+                            "srv apps keys revoke --bucket <bucket>",
+                            "srv apps keys <board_id> revoke --bucket <bucket>",
+                        )
+                    })?;
+                    let revoked = db
+                        .srv_key_revoke(board_id, sid, &bucket)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys revoke", "srv apps keys <board_id> revoke --bucket <bucket>"))?;
+                    Ok(json!({ "status": "ok", "revoked": revoked }))
+                }
+                other => Err(err_json(
+                    &format!("unknown apps keys verb '{other}'"),
+                    raw,
+                    "srv apps keys <verb>",
+                    USAGE,
+                )),
+            }
+        }
+        "hooks" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps hooks <board_id> <verb>", "srv apps hooks <board_id> list")
+            })?;
+            let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
+            let rest = &args[2..];
+            require_board(db, board_id, sid, raw).await?;
+            match sub {
+                "register" => {
+                    let url = rest.first().ok_or_else(|| {
+                        err_json("missing <url>", raw, "srv apps hooks <board_id> register <url> [--secret ~]", "srv apps hooks <board_id> register https://example.com/webhook --secret s3cret")
+                    })?;
+                    let secret = joined_flag(rest, "--secret");
+                    db.srv_hook_register(board_id, sid, url, secret.as_deref())
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks register", "srv apps hooks <board_id> register <url>"))?;
+                    Ok(json!({ "status": "ok", "registered": true }))
+                }
+                "list" => {
+                    let hooks = db
+                        .srv_hook_list(board_id, sid)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks list", "srv apps hooks <board_id> list"))?;
+                    Ok(json!({ "status": "ok", "hooks": hooks }))
+                }
+                "remove" => {
+                    let url = rest.first().ok_or_else(|| {
+                        err_json("missing <url>", raw, "srv apps hooks <board_id> remove <url>", "srv apps hooks <board_id> remove https://example.com/webhook")
+                    })?;
+                    db.srv_hook_remove(board_id, sid, url)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks remove", "srv apps hooks <board_id> remove <url>"))?;
+                    Ok(json!({ "status": "ok", "removed": true }))
+                }
+                "deliveries" => {
+                    let url = joined_flag(rest, "--url");
+                    let deliveries = db
+                        .srv_hook_deliveries(board_id, sid, url.as_deref())
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks deliveries", "srv apps hooks <board_id> deliveries [--url <u>]"))?;
+                    Ok(json!({ "status": "ok", "deliveries": deliveries }))
+                }
+                "replay" => {
+                    let url = rest.first().ok_or_else(|| {
+                        err_json("missing <url>", raw, "srv apps hooks <board_id> replay <url>", "srv apps hooks <board_id> replay https://example.com/webhook")
+                    })?;
+                    let rescheduled = db
+                        .srv_hook_reschedule(board_id, sid, url)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks replay", "srv apps hooks <board_id> replay <url>"))?;
+                    Ok(json!({ "status": "ok", "rescheduled": rescheduled }))
+                }
+                other => Err(err_json(
+                    &format!("unknown apps hooks verb '{other}'"),
+                    raw,
+                    "srv apps hooks <verb>",
+                    USAGE,
+                )),
+            }
+        }
+        "rate" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json(
+                    "missing <board_id>",
+                    raw,
+                    "srv apps rate <board_id> '<json>' | --clear",
+                    "srv apps rate <board_id> '{\"submit\":60}'",
+                )
+            })?;
+            require_board(db, board_id, sid, raw).await?;
+            if has_flag(args, "--clear") {
+                db.srv_rate_set(board_id, sid, None)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate --clear", "srv apps rate <board_id> --clear"))?;
+                return Ok(json!({ "status": "ok", "clear": true }));
+            }
+            if args.len() < 2 {
+                return Err(err_json(
+                    "missing '<json>' rate config",
+                    raw,
+                    "srv apps rate <board_id> '<json>'",
+                    "srv apps rate <board_id> '{\"submit\":60}'",
+                ));
+            }
+            let json_tokens: Vec<&str> = args[1..]
+                .iter()
+                .map(|v| v.as_str())
+                .take_while(|t| !t.starts_with("--"))
+                .collect();
+            let json_str = unquote(&json_tokens.join(" "));
+            let cfg: Value = serde_json::from_str(&json_str).map_err(|_| {
+                err_json(
+                    "invalid JSON rate config",
+                    raw,
+                    "srv apps rate <board_id> '<json>'",
+                    "srv apps rate <board_id> '{\"submit\":60}'",
+                )
+            })?;
+            db.srv_rate_set(board_id, sid, Some(&cfg.to_string()))
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate", "srv apps rate <board_id> '<json>'"))?;
+            let merged = db
+                .srv_rate_config(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate", "srv apps rate <board_id> '<json>'"))?;
+            let rate = serde_json::to_value(&merged).unwrap_or(Value::Null);
+            Ok(json!({ "status": "ok", "rate": rate }))
+        }
+        "ttl" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json(
+                    "missing <board_id>",
+                    raw,
+                    "srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>']",
+                    "srv apps ttl <board_id> 3600 --ttl-until '$.expires_at'",
+                )
+            })?;
+            require_board(db, board_id, sid, raw).await?;
+            if has_flag(args, "--clear") {
+                db.srv_ttl_set(board_id, sid, None, None)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl --clear", "srv apps ttl <board_id> --clear"))?;
+                return Ok(json!({ "status": "ok", "clear": true }));
+            }
+            let field = joined_flag(args, "--ttl-until");
+            let seconds: Option<i64> = args.get(1).and_then(|t| t.parse().ok());
+            if let Some(tok) = args.get(1).filter(|t| !t.starts_with("--")) {
+                if seconds.is_none() {
+                    return Err(err_json(
+                        &format!("'{tok}' is not an integer number of seconds"),
+                        raw,
+                        "srv apps ttl <board_id> [<seconds>]",
+                        "srv apps ttl <board_id> 3600",
+                    ));
+                }
+            }
+            if seconds.is_none() && field.is_none() {
+                let ttl = db
+                    .srv_ttl_get(board_id)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id>"))?;
+                return Ok(json!({ "status": "ok", "ttl": ttl }));
+            }
+            db.srv_ttl_set(board_id, sid, seconds, field.as_deref())
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id> <seconds>"))?;
+            let ttl = db
+                .srv_ttl_get(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id>"))?;
+            Ok(json!({ "status": "ok", "ttl": ttl }))
+        }
+        "link" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps link <board_id> --on '$.k' --to <parent> --via '$.k'", "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'")
+            })?;
+            require_board(db, board_id, sid, raw).await?;
+            if has_flag(args, "--clear") {
+                db.srv_link_clear(board_id, sid)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps link --clear", "srv apps link <child> --clear"))?;
+                return Ok(json!({ "status": "ok", "clear": true }));
+            }
+            let from = joined_flag(args, "--on");
+            let parent = joined_flag(args, "--to");
+            let via = joined_flag(args, "--via");
+            if from.is_none() && parent.is_none() && via.is_none() {
+                let link = db
+                    .srv_link_get(board_id)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child>"))?;
+                return Ok(json!({ "status": "ok", "link": link }));
+            }
+            if from.is_none() || parent.is_none() || via.is_none() {
+                return Err(err_json(
+                    "link needs --on '$.k' --to <parent_board> --via '$.k'",
+                    raw,
+                    "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'",
+                    "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'",
+                ));
+            }
+            db.srv_link_set(board_id, sid, from.as_deref().unwrap(), parent.as_deref().unwrap(), via.as_deref().unwrap())
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'"))?;
+            let link = db
+                .srv_link_get(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child>"))?;
+            Ok(json!({ "status": "ok", "link": link }))
+        }
+        "audit" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps audit <board_id>", "srv apps audit <board_id> on")
+            })?;
+            let on_off = args.get(1).map(|s| s.as_str()).unwrap_or_default();
+            let enabled = match on_off {
+                "on" | "1" | "true" => true,
+                "off" | "0" | "false" => false,
+                _ => {
+                    let rows = db
+                        .srv_audit_list(board_id, sid, None, 100)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps audit", "srv apps audit <board_id> on|off"))?;
+                    return Ok(json!({ "status": "ok", "audit": rows }));
+                }
+            };
+            db.srv_app_audit_set(board_id, sid, enabled)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps audit", "srv apps audit <board_id> on|off"))?;
+            Ok(json!({ "status": "ok", "audit_enabled": enabled }))
+        }
         other => Err(err_json(
             &format!("unknown apps verb '{other}'"),
             raw,
@@ -282,9 +571,10 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv records <verb>", "srv records list"))?;
-    require_board(db, board_id, sid, raw).await?;
+    let app = require_board(db, board_id, sid, raw).await?;
     let rest = &args[1..];
     match verb {
+        "audit" => cmd_audit_records(db, board_id, &app.owner_key, rest, raw).await,
         "submit" => {
             if rest.is_empty() {
                 return Err(err_json(
@@ -534,6 +824,19 @@ let limit: i64 = val_after(rest, "--limit")
             USAGE,
         )),
     }
+}
+
+async fn cmd_audit_records(db: &DbPool, board_id: &str, owner: &str, rest: &[&String], raw: &str) -> CmdResult {
+    let since = val_after(rest, "--since").map(|s| s.to_string());
+    let limit: i64 = val_after(rest, "--limit")
+        .and_then(|l| l.parse().ok())
+        .unwrap_or(100)
+        .clamp(1, 1000);
+    let rows = db
+        .srv_audit_list(board_id, owner, since.as_deref(), limit)
+        .await
+        .map_err(|e| err_json(&e.to_string(), raw, "srv records audit", "srv records audit <board_id>"))?;
+    Ok(json!({ "status": "ok", "audit": rows }))
 }
 
 async fn cmd_files(db: &DbPool, dir: &Path, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
