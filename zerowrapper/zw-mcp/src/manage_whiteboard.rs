@@ -181,12 +181,12 @@ impl ManageWhiteboardProvider {
             }
             "about" => Ok(json!({ "status": "ok", "about": ABOUT_TEXT })),
             "srv" => {
-                let db = self.handle.db().ok_or_else(|| err_json(
+                let store = self.handle.db().ok_or_else(|| err_json(
                     "serverless store is unavailable (no whiteboard db configured)",
                     raw, "srv <action>", "srv apps list",
                 ))?;
                 let dir = self.handle.dir().clone();
-                match crate::srv::execute_srv(&db, &dir, &sid, &rest, raw).await {
+                match crate::srv::execute_srv(&store, &dir, &sid, &rest, raw).await {
                     Ok(v) => Ok(v),
                     Err(e) => Err(e),
                 }

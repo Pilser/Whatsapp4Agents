@@ -1,8 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
 use serde_json::{json, Value};
 use zw_db::serverless::{Agg, Op, SrvFilter, parse_filter};
 use zw_db::serverless::SrvApp;
 use zw_db::DbPool;
+use zw_db::SessionStore;
 
 const USAGE: &str =
     "usage: srv <group> <verb> [args]\n\
@@ -186,8 +188,13 @@ fn public_mode(args: &[&String], raw: &str, verb: &str) -> Result<bool, Value> {
     }
 }
 
-async fn require_board(db: &DbPool, board_id: &str, sid: &str, raw: &str) -> Result<SrvApp, Value> {
-    db.srv_app_owned(board_id, sid)
+async fn require_board(store: &SessionStore, board_id: &str, sid: &str, raw: &str) -> Result<(SrvApp, Arc<DbPool>), Value> {
+    let pool = store
+        .board_pool(board_id)
+        .await
+        .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?;
+    let app = pool
+        .srv_app_owned(board_id, sid)
         .await
         .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?
         .ok_or_else(|| {
@@ -197,10 +204,11 @@ async fn require_board(db: &DbPool, board_id: &str, sid: &str, raw: &str) -> Res
                 "srv <group> <verb>",
                 "srv apps list",
             )
-        })
+        })?;
+    Ok((app, pool))
 }
 
-async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
+async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": APPS_USAGE }));
     }
@@ -221,31 +229,29 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let schema = joined_flag(args, "--json");
             let public_reads = public_mode(args, raw, "srv apps create")?;
             let unique_key = joined_flag(args, "--unique");
-            let board_id = db
-                .srv_app_create(sid, &title, schema.as_deref(), public_reads, unique_key.as_deref())
+            let board_id = store
+                .create_board(sid, &title, schema.as_deref(), public_reads, unique_key.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "create", "create a new app"))?;
             Ok(json!({ "status": "ok", "board_id": board_id }))
         }
         "list" => {
-            let apps = db
-                .srv_app_list(sid)
-                .await
-                .map_err(|e| err_json(&e.to_string(), raw, "list", "list apps"))?;
+            let pool = store.session(sid).await.map_err(|e| err_json(&e.to_string(), raw, "list", "list apps"))?;
+            let apps = pool.srv_app_list(sid).await.map_err(|e| err_json(&e.to_string(), raw, "list", "list apps"))?;
             Ok(json!({ "status": "ok", "apps": apps }))
         }
         "show" => {
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps show <board_id>", "srv apps show <board_id>")
             })?;
-            let app = require_board(db, board_id, sid, raw).await?;
+            let (app, _pool) = require_board(store, board_id, sid, raw).await?;
             Ok(json!({ "status": "ok", "app": app }))
         }
         "schema" => {
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps schema <board_id>", "srv apps schema <board_id>")
             })?;
-            let app = require_board(db, board_id, sid, raw).await?;
+            let (app, _pool) = require_board(store, board_id, sid, raw).await?;
             Ok(json!({
                 "status": "ok",
                 "board_id": app.board_id,
@@ -256,7 +262,7 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps update <board_id>", "srv apps update <board_id>")
             })?;
-            require_board(db, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             let title = joined_flag(args, "--title");
             let schema: Option<Option<String>> = if has_flag(args, "--clear-schema") {
                 Some(None)
@@ -285,7 +291,7 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                 }
                 None => None,
             };
-            db.srv_app_update(
+            pool.srv_app_update(
                 board_id,
                 sid,
                 title.as_deref(),
@@ -301,8 +307,8 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps delete <board_id>", "srv apps delete <board_id>")
             })?;
-            require_board(db, board_id, sid, raw).await?;
-            db.srv_app_delete(board_id, sid)
+            require_board(store, board_id, sid, raw).await?;
+            store.delete_board(sid, board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps delete", "srv apps delete <board_id>"))?;
             Ok(json!({ "status": "ok", "deleted": true }))
@@ -315,9 +321,8 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let rest = &args[2..];
             match sub {
                 "list" => {
-                    require_board(db, board_id, sid, raw).await?;
-                    let keys = db
-                        .srv_key_list(board_id, sid)
+                    let keys = store
+                        .key_list(board_id, sid)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys list", "srv apps keys <board_id> list"))?;
                     let keys: Vec<Value> = keys
@@ -333,17 +338,15 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     Ok(json!({ "status": "ok", "keys": keys }))
                 }
                 "issue" => {
-                    require_board(db, board_id, sid, raw).await?;
                     let role = val_after(rest, "--role").unwrap_or_else(|| "writer".to_string());
                     let writer = joined_flag(rest, "--writer");
-                    let (bucket, secret) = db
-                        .srv_key_issue(board_id, sid, &role, writer.as_deref())
+                    let (bucket, secret) = store
+                        .key_issue(board_id, sid, &role, writer.as_deref())
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys issue", "srv apps keys <board_id> issue --role writer"))?;
                     Ok(json!({ "status": "ok", "key": secret, "bucket": bucket }))
                 }
                 "revoke" => {
-                    require_board(db, board_id, sid, raw).await?;
                     let bucket = val_after(rest, "--bucket").ok_or_else(|| {
                         err_json(
                             "missing --bucket <bucket>",
@@ -352,8 +355,8 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                             "srv apps keys <board_id> revoke --bucket <bucket>",
                         )
                     })?;
-                    let revoked = db
-                        .srv_key_revoke(board_id, sid, &bucket)
+                    let revoked = store
+                        .key_revoke(board_id, sid, &bucket)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys revoke", "srv apps keys <board_id> revoke --bucket <bucket>"))?;
                     Ok(json!({ "status": "ok", "revoked": revoked }))
@@ -372,20 +375,20 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             })?;
             let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
             let rest = &args[2..];
-            require_board(db, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             match sub {
                 "register" => {
                     let url = rest.first().ok_or_else(|| {
                         err_json("missing <url>", raw, "srv apps hooks <board_id> register <url> [--secret ~]", "srv apps hooks <board_id> register https://example.com/webhook --secret s3cret")
                     })?;
                     let secret = joined_flag(rest, "--secret");
-                    db.srv_hook_register(board_id, sid, url, secret.as_deref())
+                    pool.srv_hook_register(board_id, sid, url, secret.as_deref())
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks register", "srv apps hooks <board_id> register <url>"))?;
                     Ok(json!({ "status": "ok", "registered": true }))
                 }
                 "list" => {
-                    let hooks = db
+                    let hooks = pool
                         .srv_hook_list(board_id, sid)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks list", "srv apps hooks <board_id> list"))?;
@@ -395,15 +398,15 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     let url = rest.first().ok_or_else(|| {
                         err_json("missing <url>", raw, "srv apps hooks <board_id> remove <url>", "srv apps hooks <board_id> remove https://example.com/webhook")
                     })?;
-                    db.srv_hook_remove(board_id, sid, url)
+                    pool.srv_hook_remove(board_id, sid, url)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks remove", "srv apps hooks <board_id> remove <url>"))?;
                     Ok(json!({ "status": "ok", "removed": true }))
                 }
                 "deliveries" => {
                     let url = joined_flag(rest, "--url");
-                    let deliveries = db
-                        .srv_hook_deliveries(board_id, sid, url.as_deref())
+                    let deliveries = store
+                        .hook_deliveries(board_id, sid, url.as_deref())
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks deliveries", "srv apps hooks <board_id> deliveries [--url <u>]"))?;
                     Ok(json!({ "status": "ok", "deliveries": deliveries }))
@@ -412,8 +415,8 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     let url = rest.first().ok_or_else(|| {
                         err_json("missing <url>", raw, "srv apps hooks <board_id> replay <url>", "srv apps hooks <board_id> replay https://example.com/webhook")
                     })?;
-                    let rescheduled = db
-                        .srv_hook_reschedule(board_id, sid, url)
+                    let rescheduled = store
+                        .hook_reschedule(board_id, sid, url)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps hooks replay", "srv apps hooks <board_id> replay <url>"))?;
                     Ok(json!({ "status": "ok", "rescheduled": rescheduled }))
@@ -435,9 +438,9 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     "srv apps rate <board_id> '{\"submit\":60}'",
                 )
             })?;
-            require_board(db, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             if has_flag(args, "--clear") {
-                db.srv_rate_set(board_id, sid, None)
+                pool.srv_rate_set(board_id, sid, None)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate --clear", "srv apps rate <board_id> --clear"))?;
                 return Ok(json!({ "status": "ok", "clear": true }));
@@ -464,10 +467,10 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     "srv apps rate <board_id> '{\"submit\":60}'",
                 )
             })?;
-            db.srv_rate_set(board_id, sid, Some(&cfg.to_string()))
+            pool.srv_rate_set(board_id, sid, Some(&cfg.to_string()))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate", "srv apps rate <board_id> '<json>'"))?;
-            let merged = db
+            let merged = pool
                 .srv_rate_config(board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps rate", "srv apps rate <board_id> '<json>'"))?;
@@ -483,9 +486,9 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     "srv apps ttl <board_id> 3600 --ttl-until '$.expires_at'",
                 )
             })?;
-            require_board(db, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             if has_flag(args, "--clear") {
-                db.srv_ttl_set(board_id, sid, None, None)
+                pool.srv_ttl_set(board_id, sid, None, None)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl --clear", "srv apps ttl <board_id> --clear"))?;
                 return Ok(json!({ "status": "ok", "clear": true }));
@@ -503,16 +506,16 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                 }
             }
             if seconds.is_none() && field.is_none() {
-                let ttl = db
+                let ttl = pool
                     .srv_ttl_get(board_id)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id>"))?;
                 return Ok(json!({ "status": "ok", "ttl": ttl }));
             }
-            db.srv_ttl_set(board_id, sid, seconds, field.as_deref())
+            pool.srv_ttl_set(board_id, sid, seconds, field.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id> <seconds>"))?;
-            let ttl = db
+            let ttl = pool
                 .srv_ttl_get(board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps ttl", "srv apps ttl <board_id>"))?;
@@ -522,9 +525,9 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps link <board_id> --on '$.k' --to <parent> --via '$.k'", "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'")
             })?;
-            require_board(db, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             if has_flag(args, "--clear") {
-                db.srv_link_clear(board_id, sid)
+                pool.srv_link_clear(board_id, sid)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv apps link --clear", "srv apps link <child> --clear"))?;
                 return Ok(json!({ "status": "ok", "clear": true }));
@@ -533,7 +536,7 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
             let parent = joined_flag(args, "--to");
             let via = joined_flag(args, "--via");
             if from.is_none() && parent.is_none() && via.is_none() {
-                let link = db
+                let link = pool
                     .srv_link_get(board_id)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child>"))?;
@@ -547,10 +550,10 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                     "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'",
                 ));
             }
-            db.srv_link_set(board_id, sid, from.as_deref().unwrap(), parent.as_deref().unwrap(), via.as_deref().unwrap())
+            pool.srv_link_set(board_id, sid, from.as_deref().unwrap(), parent.as_deref().unwrap(), via.as_deref().unwrap())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'"))?;
-            let link = db
+            let link = pool
                 .srv_link_get(board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps link", "srv apps link <child>"))?;
@@ -561,18 +564,19 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
                 err_json("missing <board_id>", raw, "srv apps audit <board_id>", "srv apps audit <board_id> on")
             })?;
             let on_off = args.get(1).map(|s| s.as_str()).unwrap_or_default();
+            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
             let enabled = match on_off {
                 "on" | "1" | "true" => true,
                 "off" | "0" | "false" => false,
                 _ => {
-                    let rows = db
+                    let rows = pool
                         .srv_audit_list(board_id, sid, None, 100)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps audit", "srv apps audit <board_id> on|off"))?;
                     return Ok(json!({ "status": "ok", "audit": rows }));
                 }
             };
-            db.srv_app_audit_set(board_id, sid, enabled)
+            pool.srv_app_audit_set(board_id, sid, enabled)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps audit", "srv apps audit <board_id> on|off"))?;
             Ok(json!({ "status": "ok", "audit_enabled": enabled }))
@@ -586,7 +590,7 @@ async fn cmd_apps(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &st
     }
 }
 
-async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
+async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": RECORDS_USAGE }));
     }
@@ -604,10 +608,10 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv records <verb>", "srv records list"))?;
-    let app = require_board(db, board_id, sid, raw).await?;
+    let (app, pool) = require_board(store, board_id, sid, raw).await?;
     let rest = &args[1..];
     match verb {
-        "audit" => cmd_audit_records(db, board_id, &app.owner_key, rest, raw).await,
+        "audit" => cmd_audit_records(&pool, board_id, &app.owner_key, rest, raw).await,
         "call" => {
             let url = rest
                 .iter()
@@ -622,7 +626,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .collect();
             let body = joined_flag(rest, "--body");
             let timeout_ms: u64 = val_after(rest, "--timeout").and_then(|v| v.parse().ok()).unwrap_or(0);
-            let res = db
+            let res = pool
                 .srv_http_call(board_id, &app.owner_key, &method, &url, &headers, body.as_deref(), timeout_ms)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records call", "srv records call <board_id> <url>"))?;
@@ -652,10 +656,10 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 )
             })?;
             let writer = joined_flag(rest, "--writer");
-            db.srv_validate(board_id, &payload)
+            pool.srv_validate(board_id, &payload)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
-            let seq = db
+            let seq = pool
                 .srv_record_insert(board_id, &payload, writer.as_deref(), has_flag(rest, "--upsert"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
@@ -670,7 +674,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .and_then(|v| v.parse().ok())
                 .filter(|o| *o >= 0)
                 .unwrap_or(0);
-            let records = db
+            let records = pool
                 .srv_record_list(board_id, limit, None, offset)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records list", "srv records list <board_id>"))?;
@@ -683,7 +687,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 .and_then(|i| rest.get(i + 1))
                 .and_then(|v| v.parse().ok())
                 .ok_or_else(|| err_json("missing --seq N", raw, "srv records get <board_id> --seq N", "srv records get <board_id> --seq 1"))?;
-            let record = db
+            let record = pool
                 .srv_record_get(board_id, seq)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records get", "srv records get <board_id> --seq N"))?;
@@ -709,7 +713,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                 )
             })?;
             let writer = joined_flag(rest, "--writer");
-            db.srv_record_set(board_id, seq, &payload, writer.as_deref())
+            pool.srv_record_set(board_id, seq, &payload, writer.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records update", "srv records update <board_id> <seq> <json>"))?;
             Ok(json!({ "status": "ok", "seq": seq }))
@@ -728,7 +732,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     "srv records patch <board_id> 1 '{\"$inc\":{\"votes\":1}}'",
                 )
             })?;
-            let merged = db
+            let merged = pool
                 .srv_record_patch(board_id, seq, &ops)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records patch", "srv records patch <board_id> <seq> <ops>"))?;
@@ -755,14 +759,14 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     .filter(|o| *o >= 0)
                     .unwrap_or(0);
                 if let Some((q, others)) = split_search(&filter.conds) {
-                    let records = db
+                    let records = pool
                         .srv_record_search(&board_id, &q, &others, limit, offset, false)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
                     return Ok(json!({ "status": "ok", "records": records }));
                 }
                 let order = order_from(rest);
-                let records = db
+                let records = pool
                     .srv_record_filter(&board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit, offset)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
@@ -781,7 +785,7 @@ async fn cmd_records(db: &DbPool, sid: &str, verb: &str, args: &[&String], raw: 
                     )
                 })?;
             let eq = joined_flag(rest, "--eq");
-            let records = db
+            let records = pool
                 .srv_record_query(&board_id, &path, eq.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> <path>"))?;
@@ -815,7 +819,7 @@ let limit: i64 = val_after(rest, "--limit")
             if query.is_empty() {
                 return Err(err_json("empty <query>", raw, "srv records search <board_id> '<query>'", "srv records search <board_id> 'laptop'"));
             }
-            let records = db
+            let records = pool
                 .srv_record_search(&board_id, &query, &[], limit, offset, has_flag(rest, "--hl"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records search", "srv records search <board_id> '<query>'"))?;
@@ -837,14 +841,14 @@ let limit: i64 = val_after(rest, "--limit")
                 }
                 None => SrvFilter::default(),
             };
-            let rows = db
+            let rows = pool
                 .srv_record_aggregate(&board_id, &conds.conds, agg, field.as_deref(), group_by.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records aggregate", "srv records aggregate <board_id> --op sum"))?;
             Ok(json!({ "status": "ok", "aggregate": rows }))
         }
         "count" => {
-            let count = db
+            let count = pool
                 .srv_record_count(board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records count", "srv records count <board_id>"))?;
@@ -865,7 +869,7 @@ let limit: i64 = val_after(rest, "--limit")
                     "srv records delete <board_id> --all",
                 ));
             };
-            db.srv_record_delete(board_id, seq)
+            pool.srv_record_delete(board_id, seq)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records delete", "srv records delete <board_id>"))?;
             Ok(json!({ "status": "ok", "deleted": true }))
@@ -892,7 +896,7 @@ async fn cmd_audit_records(db: &DbPool, board_id: &str, owner: &str, rest: &[&St
     Ok(json!({ "status": "ok", "audit": rows }))
 }
 
-async fn cmd_files(db: &DbPool, dir: &Path, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
+async fn cmd_files(store: &SessionStore, dir: &Path, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": FILES_USAGE }));
     }
@@ -910,7 +914,7 @@ async fn cmd_files(db: &DbPool, dir: &Path, sid: &str, verb: &str, args: &[&Stri
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv files <verb>", "srv files list"))?;
-    require_board(db, board_id, sid, raw).await?;
+    require_board(store, board_id, sid, raw).await?;
     let rest = &args[1..];
     match verb {
         "list" => {
@@ -968,7 +972,7 @@ async fn cmd_files(db: &DbPool, dir: &Path, sid: &str, verb: &str, args: &[&Stri
 }
 
 pub async fn execute_srv(
-    db: &DbPool,
+    store: &SessionStore,
     dir: &Path,
     sid: &str,
     rest: &[&String],
@@ -982,9 +986,9 @@ pub async fn execute_srv(
         .ok_or_else(|| err_json("missing verb", raw, "srv <group> <verb>", "srv apps list"))?;
     let args = &rest[2..];
     match group.as_str() {
-        "apps" => cmd_apps(db, sid, verb, args, raw).await,
-        "records" => cmd_records(db, sid, verb, args, raw).await,
-        "files" => cmd_files(db, dir, sid, verb, args, raw).await,
+        "apps" => cmd_apps(store, sid, verb, args, raw).await,
+        "records" => cmd_records(store, sid, verb, args, raw).await,
+        "files" => cmd_files(store, dir, sid, verb, args, raw).await,
         other => Err(err_json(&format!("unknown group '{other}'"), raw, "srv <group> <verb>", USAGE)),
     }
 }

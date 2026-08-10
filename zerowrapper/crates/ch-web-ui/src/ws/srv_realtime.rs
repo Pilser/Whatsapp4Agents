@@ -2,7 +2,7 @@ use std::sync::Arc;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
 use topcoat::router::content::websocket::{Message, WebSocket};
-use zw_db::DbPool;
+use zw_db::SessionStore;
 
 use crate::realtime::Broker;
 
@@ -12,7 +12,7 @@ pub async fn handle_srv_ws(
     after: i64,
     filter: Option<String>,
     allowed: bool,
-    db: DbPool,
+    store: SessionStore,
     realtime: Arc<Broker>,
 ) {
     let (mut sink, mut stream) = socket.split();
@@ -24,14 +24,16 @@ pub async fn handle_srv_ws(
 
     let mut rx = realtime.subscribe();
 
-    if let Ok(records) = db.srv_records_after(&board_id, after).await {
-        for record in records {
-            if !filter_matches(&filter_json, &record.payload) {
-                continue;
-            }
-            let event = crate::realtime::record_event("created", &board_id, record.seq, Some(&record));
-            if sink.send(Message::text(event)).await.is_err() {
-                return;
+    if let Ok(pool) = store.board_pool(&board_id).await {
+        if let Ok(records) = pool.srv_records_after(&board_id, after).await {
+            for record in records {
+                if !filter_matches(&filter_json, &record.payload) {
+                    continue;
+                }
+                let event = crate::realtime::record_event("created", &board_id, record.seq, Some(&record));
+                if sink.send(Message::text(event)).await.is_err() {
+                    return;
+                }
             }
         }
     }

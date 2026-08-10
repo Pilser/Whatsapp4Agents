@@ -7,6 +7,7 @@ async fn in_filter_matches() {
     let db_path = dir.join("test.db");
     let pool = zw_db::DbPool::open(db_path.to_str().unwrap()).await.unwrap();
     pool.migrate().await.unwrap();
+    pool.migrate_session().await.unwrap();
 
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     for brand in ["Dell", "Apple", "Lenovo"] {

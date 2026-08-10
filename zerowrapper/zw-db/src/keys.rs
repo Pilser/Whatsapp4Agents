@@ -74,33 +74,10 @@ async fn read_key(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApiKey>> {
 }
 
 impl DbPool {
-    async fn check_owned(&self, board_id: &str, owner: &str) -> anyhow::Result<()> {
-        let conn = self.conn().await;
-        let mut rows = conn
-            .query(
-                "SELECT owner_key FROM wb_apps WHERE board_id = ?1",
-                Params::Positional(vec![Value::from(board_id)]),
-            )
-            .await?;
-        match rows.next().await? {
-            Some(row) => match row.get_value(0)? {
-                Value::Text(s) => {
-                    if s != owner {
-                        anyhow::bail!("board {board_id} is not owned by {owner}");
-                    }
-                }
-                _ => return Err(anyhow::anyhow!("invalid owner_key")),
-            },
-            None => anyhow::bail!("board {board_id} not found"),
-        }
-        Ok(())
-    }
-
-    pub async fn srv_key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
+    pub async fn srv_key_issue(&self, board_id: &str, _owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
         if !valid_role(role) {
             anyhow::bail!("invalid role '{role}' (expected reader, writer, list, admin)");
         }
-        self.check_owned(board_id, owner).await?;
         let conn = self.conn().await;
         let bucket = Uuid::new_v4().simple().to_string();
         let secret = Uuid::new_v4().simple().to_string();
@@ -118,8 +95,7 @@ impl DbPool {
         Ok((bucket, secret))
     }
 
-    pub async fn srv_key_list(&self, board_id: &str, owner: &str) -> anyhow::Result<Vec<SrvApiKey>> {
-        self.check_owned(board_id, owner).await?;
+    pub async fn srv_key_list(&self, board_id: &str, _owner: &str) -> anyhow::Result<Vec<SrvApiKey>> {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
@@ -135,8 +111,7 @@ impl DbPool {
         Ok(out)
     }
 
-    pub async fn srv_key_revoke(&self, board_id: &str, owner: &str, bucket: &str) -> anyhow::Result<bool> {
-        self.check_owned(board_id, owner).await?;
+    pub async fn srv_key_revoke(&self, board_id: &str, _owner: &str, bucket: &str) -> anyhow::Result<bool> {
         let conn = self.conn().await;
         let affected = conn
             .execute(

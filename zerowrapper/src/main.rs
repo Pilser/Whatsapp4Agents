@@ -28,7 +28,8 @@ async fn main() -> anyhow::Result<()> {
         if let Some(db_path) = db_path {
             let db = zw_db::DbPool::open(&db_path).await?;
             db.migrate().await?;
-            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(db);
+            let store = zw_db::SessionStore::new(whiteboard_dir.clone(), db);
+            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(store);
             mcp.register_provider(Box::new(
                 mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
             )).await;
@@ -70,7 +71,8 @@ async fn main() -> anyhow::Result<()> {
     });
     tracing::info!("whiteboard dir: {}", whiteboard_dir.display());
 
-    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(db.clone());
+    let store = zw_db::SessionStore::new(whiteboard_dir.clone(), db.clone());
+    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(store.clone());
     let _wb_task = whiteboard.spawn();
 
     let mcp = zw_mcp::McpRegistry::new();
@@ -156,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     let ui_ctx = ch_web_ui::context::AppContext::new(
         registry_handle,
         zeroclaw_handle,
-        db.clone(),
+        store.clone(),
         cache.clone(),
         &config.ch_web.agent,
         config.ch_web.upload_dir.clone(),
@@ -166,8 +168,8 @@ async fn main() -> anyhow::Result<()> {
     )
     .with_whiteboard(whiteboard.clone())
     .with_mcp(mcp.providers());
-    let _webhook_worker = ch_web_ui::webhooks::spawn_webhook_worker(db.clone());
-    let _ttl_worker = ch_web_ui::ttl_sweeper::spawn_ttl_sweeper(db.clone(), std::time::Duration::from_secs(30));
+    let _webhook_worker = ch_web_ui::webhooks::spawn_webhook_worker(store.clone());
+    let _ttl_worker = ch_web_ui::ttl_sweeper::spawn_ttl_sweeper(store.clone(), std::time::Duration::from_secs(30));
     let ui_handle = tokio::spawn(async move {
         if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);

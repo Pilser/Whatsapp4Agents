@@ -63,9 +63,9 @@ pub async fn srv_ws(cx: &Cx, upgrade: WebSocketUpgrade) -> Result<Response> {
 
     let allowed = crate::routes::serverless::authorize_read(cx, ctx, &board_id).await.is_ok();
 
-    let db = ctx.db.clone();
+    let store = ctx.db.clone();
     let realtime: Arc<Broker> = ctx.realtime.clone();
     upgrade.on_upgrade(move |socket| async move {
-        handle_srv_ws(socket, board_id, after, filter, allowed, db, realtime).await;
+        handle_srv_ws(socket, board_id, after, filter, allowed, store, realtime).await;
     })
 }

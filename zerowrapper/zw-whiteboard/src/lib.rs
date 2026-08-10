@@ -65,7 +65,7 @@ pub struct WhiteboardHandle {
     poll_interval: Duration,
     state: Arc<Mutex<MonitorCore>>,
     tx: broadcast::Sender<WhiteboardEvent>,
-    db: Option<zw_db::DbPool>,
+    db: Option<zw_db::session_store::SessionStore>,
 }
 
 impl WhiteboardHandle {
@@ -86,7 +86,7 @@ impl WhiteboardHandle {
         }
     }
 
-    pub fn with_db(mut self, db: zw_db::DbPool) -> Self {
+    pub fn with_db(mut self, db: zw_db::session_store::SessionStore) -> Self {
         self.db = Some(db);
         self
     }
@@ -107,8 +107,8 @@ impl WhiteboardHandle {
                     core.seen.keys().cloned().collect()
                 };
                 for sid in sessions {
-                    if let Some(db) = &db {
-                        poll_with_db(&db, &dir, &cache, &state, &tx, &sid).await;
+                    if let Some(store) = &db {
+                        poll_with_db(store, &dir, &cache, &state, &tx, &sid).await;
                     } else {
                         poll_without_db(&dir, &cache, &state, &tx, &sid).await;
                     }
@@ -122,9 +122,10 @@ impl WhiteboardHandle {
     }
 
     pub async fn open(&self, sid: &str, page_no: i64) -> anyhow::Result<()> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        db.wb_open(sid, page_no).await?;
-        let (pages, _) = db.wb_state(sid).await?;
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let pool = store.session(sid).await?;
+        pool.wb_open(sid, page_no).await?;
+        let (pages, _) = pool.wb_state(sid).await?;
         let body = pages
             .iter()
             .find(|p| p.page_no == page_no)
@@ -143,33 +144,38 @@ impl WhiteboardHandle {
     }
 
     pub async fn close(&self, sid: &str) -> anyhow::Result<()> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        db.wb_close(sid).await?;
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let pool = store.session(sid).await?;
+        pool.wb_close(sid).await?;
         Ok(())
     }
 
     pub async fn add(&self, sid: &str, title: &str) -> anyhow::Result<i64> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        db.wb_add_page(sid, title).await
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let pool = store.session(sid).await?;
+        pool.wb_add_page(sid, title).await
     }
 
     pub async fn delete(&self, sid: &str, page_no: i64) -> anyhow::Result<()> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        db.wb_delete_page(sid, page_no).await
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let pool = store.session(sid).await?;
+        pool.wb_delete_page(sid, page_no).await
     }
 
     pub async fn move_pages(&self, sid: &str, from: i64, to: i64) -> anyhow::Result<()> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        db.wb_move_page(sid, from, to).await
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let pool = store.session(sid).await?;
+        pool.wb_move_page(sid, from, to).await
     }
 
     pub async fn set_public(&self, sid: &str, page_no: i64, public: bool) -> anyhow::Result<Option<String>> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        let slug = db.wb_set_public(sid, page_no, public).await?;
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        let slug = store.set_page_public(sid, page_no, public).await?;
         if let Some(slug) = &slug {
             let state = self.build_state(sid).await?;
             if let Some(page) = state.pages.iter().find(|p| p.page_no == page_no) {
-                db.wb_set_public_content(slug, &page.body_md, &serde_json::to_string(&page.pins)?).await?;
+                let pool = store.session(sid).await?;
+                pool.wb_set_public_content(slug, &page.body_md, &serde_json::to_string(&page.pins)?).await?;
             }
         }
         Ok(slug)
@@ -177,15 +183,16 @@ impl WhiteboardHandle {
 
     pub async fn ensure(&self, session_id: &str) -> anyhow::Result<()> {
         let path = session_path(&self.dir, session_id);
-        if let Some(db) = &self.db {
-            let pre = db.wb_state(session_id).await.map(|(p, _)| p).unwrap_or_default();
-            db.wb_ensure_session(session_id).await?;
+        if let Some(store) = &self.db {
+            let pool = store.session(session_id).await?;
+            let pre = pool.wb_state(session_id).await.map(|(p, _)| p).unwrap_or_default();
+            pool.wb_ensure_session(session_id).await?;
             let just_seeded = pre.is_empty();
-            let (pages, _) = db.wb_state(session_id).await?;
+            let (pages, _) = pool.wb_state(session_id).await?;
             if just_seeded {
                 if let Ok(raw) = std::fs::read_to_string(&path) {
                     if !raw.trim().is_empty() && raw.trim() != SEED_TEMPLATE.trim() {
-                        let _ = db.wb_write_page(session_id, 1, "# Whiteboard", &raw).await;
+                        let _ = pool.wb_write_page(session_id, 1, "# Whiteboard", &raw).await;
                     }
                 }
             }
@@ -248,28 +255,29 @@ impl WhiteboardHandle {
         &self.dir
     }
 
-    pub fn db(&self) -> Option<zw_db::DbPool> {
+    pub fn db(&self) -> Option<zw_db::session_store::SessionStore> {
         self.db.clone()
     }
 
     async fn build_state(&self, sid: &str) -> anyhow::Result<BoardState> {
-        let db = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
-        build_board_state(db, &self.dir, &self.cache, sid).await
+        let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
+        build_board_state(store, &self.dir, &self.cache, sid).await
     }
 }
 
 async fn build_board_state(
-    db: &zw_db::DbPool,
+    store: &zw_db::session_store::SessionStore,
     dir: &PathBuf,
     cache: &Arc<zw_cache::CacheManager>,
     sid: &str,
 ) -> anyhow::Result<BoardState> {
-    let (pages, meta) = db.wb_state(sid).await?;
+    let pool = store.session(sid).await?;
+    let (pages, meta) = pool.wb_state(sid).await?;
     let mut state_pages = Vec::new();
     for page in &pages {
         let parsed = parser::parse_markdown(&page.body_md);
         let board = resolve::resolve_board(dir, &parsed, cache)?;
-        let public_slug = db.wb_public_slug(sid, page.page_no).await?;
+        let public_slug = pool.wb_public_slug(sid, page.page_no).await?;
         state_pages.push(BoardPage {
             page_no: page.page_no,
             title: page.title.clone(),
@@ -288,7 +296,7 @@ async fn build_board_state(
 }
 
 async fn poll_with_db(
-    db: &zw_db::DbPool,
+    store: &zw_db::session_store::SessionStore,
     dir: &PathBuf,
     cache: &Arc<zw_cache::CacheManager>,
     state: &Arc<Mutex<MonitorCore>>,
@@ -301,34 +309,39 @@ async fn poll_with_db(
         core.has_changed(sid, &path)
     };
     if file_changed {
-        if let Ok((pages, meta)) = db.wb_state(sid).await {
-            if let Some(active) = meta.active_page {
-                if let Ok(raw) = std::fs::read_to_string(&path) {
-                    let title = pages
-                        .iter()
-                        .find(|p| p.page_no == active)
-                        .map(|p| p.title.as_str())
-                        .unwrap_or_default();
-                    let _ = db.wb_write_page(sid, active, title, &raw).await;
+        if let Ok(pool) = store.session(sid).await {
+            if let Ok((pages, meta)) = pool.wb_state(sid).await {
+                if let Some(active) = meta.active_page {
+                    if let Ok(raw) = std::fs::read_to_string(&path) {
+                        let title = pages
+                            .iter()
+                            .find(|p| p.page_no == active)
+                            .map(|p| p.title.as_str())
+                            .unwrap_or_default();
+                        let _ = pool.wb_write_page(sid, active, title, &raw).await;
+                    }
                 }
             }
         }
     }
     let rev_changed = {
         let mut core = state.lock().await;
-        match db.wb_state(sid).await {
-            Ok((_, meta)) => {
-                let changed = core.rev.get(sid) != Some(&meta.rev);
-                if changed {
-                    core.rev.insert(sid.to_string(), meta.rev);
+        match store.session(sid).await {
+            Ok(pool) => match pool.wb_state(sid).await {
+                Ok((_, meta)) => {
+                    let changed = core.rev.get(sid) != Some(&meta.rev);
+                    if changed {
+                        core.rev.insert(sid.to_string(), meta.rev);
+                    }
+                    changed
                 }
-                changed
-            }
+                Err(_) => false,
+            },
             Err(_) => false,
         }
     };
     if rev_changed {
-        match build_board_state(db, dir, cache, sid).await {
+        match build_board_state(store, dir, cache, sid).await {
             Ok(state_val) => {
                 let _ = tx.send(WhiteboardEvent::BoardUpdate { session_id: sid.to_string(), state: state_val });
             }

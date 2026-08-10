@@ -19,6 +19,16 @@ fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
         .unwrap()
 }
 
+async fn board_pool(ctx: &AppContext, board_id: &str) -> Result<std::sync::Arc<zw_db::DbPool>, Response> {
+    match ctx.db.board_pool(board_id).await {
+        Ok(p) => Ok(p),
+        Err(e) => {
+            tracing::warn!("board_pool: {e}");
+            Err(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"})))
+        }
+    }
+}
+
 fn query_params(cx: &Cx) -> std::collections::HashMap<&str, &str> {
     uri(cx)
         .query()
@@ -91,6 +101,10 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "submit").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let body_bytes = match to_bytes(body, 1_000_000).await {
         Ok(b) => b,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
@@ -100,12 +114,12 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
 
-    match ctx.db.srv_app_by_id(board_id).await {
+    match pool.srv_app_by_id(board_id).await {
         Ok(Some(_)) => {}
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     }
 
-    if let Err(e) = ctx.db.srv_validate(board_id, &payload).await {
+    if let Err(e) = pool.srv_validate(board_id, &payload).await {
         return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})));
     }
 
@@ -118,7 +132,7 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
     let upsert = params.get("upsert").is_some()
         || matches!(params.get("upsert").map(|v| *v), Some("1") | Some("true"));
 
-    match ctx.db.srv_record_insert(board_id, &payload, writer.as_deref(), upsert).await {
+    match pool.srv_record_insert(board_id, &payload, writer.as_deref(), upsert).await {
         Ok(seq) => {
             publish_record_event(ctx, board_id, "created", seq).await;
             Ok(json_response(StatusCode::CREATED, serde_json::json!({"ok": true, "seq": seq})))
@@ -131,7 +145,11 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
 }
 
 async fn require_public_readable(ctx: &AppContext, board_id: &str) -> Result<Option<zw_db::serverless::SrvApp>, Response> {
-    match ctx.db.srv_app_by_id(board_id).await {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Err(resp),
+    };
+    match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) if app.public_reads => Ok(Some(app)),
         Ok(Some(_)) => Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "private board"}))),
         _ => Err(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
@@ -195,7 +213,11 @@ fn rate_client_key(cx: &Cx, board_id: &str, token: &Option<String>) -> String {
 }
 
 async fn rate_action(cx: &Cx, ctx: &AppContext, board_id: &str, token: &Option<String>, action: &str) -> Result<(), Response> {
-    let cfg = match ctx.db.srv_rate_config(board_id).await {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Err(resp),
+    };
+    let cfg = match pool.srv_rate_config(board_id).await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("rate_action: config error: {}", e);
@@ -222,7 +244,7 @@ async fn authorize_identity(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result
     if token == board_id {
         return Ok(Some(SrvIdentity::LegacyAdmin));
     }
-    match ctx.db.srv_key_auth(&token).await {
+    match ctx.db.system().srv_key_auth(&token).await {
         Ok(Some(key)) if key.board_id == board_id => {
             Ok(Some(SrvIdentity::AppKey { role: key.role, writer: key.writer }))
         }
@@ -246,7 +268,7 @@ async fn authorize_write(cx: &Cx, ctx: &AppContext, board_id: &str, enforce: boo
         }
     }
     if enforce && identity.is_none() {
-        let has_keys = match ctx.db.srv_board_has_keys(board_id).await {
+        let has_keys = match ctx.db.system().srv_board_has_keys(board_id).await {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("authorize_write: board has_keys error: {}", e);
@@ -303,6 +325,10 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, action).await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let limit: i64 = params.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50).clamp(1, 500);
     let offset: i64 = params.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0).max(0);
     let hl = params.get("hl").and_then(|v| if *v == "1" || *v == "on" || *v == "true" { Some(()) } else { None }).is_some();
@@ -336,7 +362,7 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         if let Some(w) = &writer {
             conds.insert(0, FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
         }
-        match ctx.db.srv_record_search(board_id, &q, &conds, limit, offset, hl).await {
+        match pool.srv_record_search(board_id, &q, &conds, limit, offset, hl).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: search error: {}", e);
@@ -355,8 +381,7 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         if let Some(w) = &writer {
             filter.conds.push(FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
         }
-        match ctx
-            .db
+        match pool
             .srv_record_filter(board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit, offset)
             .await
         {
@@ -368,7 +393,7 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         }
     } else if let Some(w) = &writer {
         let conds = vec![FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) }];
-        match ctx.db.srv_record_filter(board_id, &conds, None, limit, offset).await {
+        match pool.srv_record_filter(board_id, &conds, None, limit, offset).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: writer filter error: {}", e);
@@ -376,7 +401,7 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             }
         }
     } else {
-        match ctx.db.srv_record_list(board_id, limit, None, offset).await {
+        match pool.srv_record_list(board_id, limit, None, offset).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: list error: {}", e);
@@ -397,6 +422,10 @@ pub async fn srv_aggregate(cx: &Cx) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "read").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let agg = match params.get("op").and_then(|o| Agg::parse(o).ok()) {
         Some(a) => a,
         None => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing or invalid op (count, sum, avg, min, max)"}))),
@@ -421,8 +450,7 @@ pub async fn srv_aggregate(cx: &Cx) -> Result<Response> {
         Vec::new()
     };
 
-    match ctx
-        .db
+    match pool
         .srv_record_aggregate(board_id, &conds, agg, field.as_deref(), group_by.as_deref())
         .await
     {
@@ -453,7 +481,12 @@ pub async fn srv_record(cx: &Cx) -> Result<Response> {
         return Ok(resp);
     }
 
-    match ctx.db.srv_record_get(board_id, seq).await {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+
+    match pool.srv_record_get(board_id, seq).await {
         Ok(Some(record)) => {
             let records_json = params_to_json(&[record]);
             let rec = records_json[0].clone();
@@ -475,12 +508,16 @@ pub async fn srv_record_put(cx: &Cx, body: Body) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "submit").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let seq: i64 = match path_param::<Seq>(cx).parse() {
         Ok(s) => s,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid seq"}))),
     };
 
-    match ctx.db.srv_app_by_id(board_id).await {
+    match pool.srv_app_by_id(board_id).await {
         Ok(Some(_)) => {}
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     }
@@ -499,11 +536,11 @@ pub async fn srv_record_put(cx: &Cx, body: Body) -> Result<Response> {
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
 
-    if let Err(e) = ctx.db.srv_validate(board_id, &payload).await {
+    if let Err(e) = pool.srv_validate(board_id, &payload).await {
         return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})));
     }
 
-    match ctx.db.srv_record_get(board_id, seq).await {
+    match pool.srv_record_get(board_id, seq).await {
         Ok(Some(_)) => {}
         Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
         Err(e) => {
@@ -514,7 +551,7 @@ pub async fn srv_record_put(cx: &Cx, body: Body) -> Result<Response> {
 
     let writer = request_writer(cx, &identity);
 
-    match ctx.db.srv_record_set(board_id, seq, &payload, writer.as_deref()).await {
+    match pool.srv_record_set(board_id, seq, &payload, writer.as_deref()).await {
         Ok(()) => {
             publish_record_event(ctx, board_id, "updated", seq).await;
             Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "seq": seq})))
@@ -534,12 +571,16 @@ pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "submit").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let seq: i64 = match path_param::<Seq>(cx).parse() {
         Ok(s) => s,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid seq"}))),
     };
 
-    match ctx.db.srv_app_by_id(board_id).await {
+    match pool.srv_app_by_id(board_id).await {
         Ok(Some(_)) => {}
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     }
@@ -558,7 +599,7 @@ pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
 
-    match ctx.db.srv_record_get(board_id, seq).await {
+    match pool.srv_record_get(board_id, seq).await {
         Ok(Some(_)) => {}
         Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
         Err(e) => {
@@ -567,7 +608,7 @@ pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
         }
     }
 
-    match ctx.db.srv_record_patch(board_id, seq, &ops).await {
+    match pool.srv_record_patch(board_id, seq, &ops).await {
         Ok(merged) => {
             publish_record_event(ctx, board_id, "updated", seq).await;
             Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "seq": seq, "payload": merged})))
@@ -586,6 +627,10 @@ async fn persist_upload(
     extra: serde_json::Map<String, serde_json::Value>,
     writer: Option<&str>,
 ) -> Response {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return resp,
+    };
     let handle = match ctx.whiteboard() {
         Some(h) => h,
         None => return json_response(StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({"error": "whiteboard unavailable"})),
@@ -610,7 +655,7 @@ async fn persist_upload(
     payload.insert("type".to_string(), serde_json::json!(content_type));
     payload.insert("size".to_string(), serde_json::json!(data.len()));
 
-    match ctx.db.srv_record_insert(board_id, &serde_json::Value::Object(payload), writer, false).await {
+    match pool.srv_record_insert(board_id, &serde_json::Value::Object(payload), writer, false).await {
         Ok(seq) => {
             publish_record_event(ctx, board_id, "created", seq).await;
             json_response(
@@ -633,8 +678,12 @@ pub async fn srv_upload(cx: &Cx, body: Body) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "upload").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
@@ -712,7 +761,12 @@ pub async fn srv_file(cx: &Cx) -> Result<Response> {
         return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid file"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) if app.public_reads => app,
         Ok(Some(_)) => return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "private board"}))),
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
@@ -734,7 +788,7 @@ pub async fn srv_file(cx: &Cx) -> Result<Response> {
 
     let mut content_type = "application/octet-stream".to_string();
     let mut filename = file_id.clone();
-    if let Ok(records) = ctx.db.srv_record_query(board_id, "$.file", Some(&file)).await {
+    if let Ok(records) = pool.srv_record_query(board_id, "$.file", Some(&file)).await {
         if let Some(first) = records.first() {
             if let Some(t) = first.payload["type"].as_str() {
                 content_type = t.to_string();
@@ -769,6 +823,10 @@ pub async fn srv_keys_issue(cx: &Cx, body: Body) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, board_id, &token, "submit").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
 
     let identity = match authorize_identity(cx, ctx, board_id).await {
         Ok(Some(id)) => id,
@@ -785,7 +843,7 @@ pub async fn srv_keys_issue(cx: &Cx, body: Body) -> Result<Response> {
         return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
@@ -801,7 +859,7 @@ pub async fn srv_keys_issue(cx: &Cx, body: Body) -> Result<Response> {
     let role = req.get("role").and_then(|r| r.as_str()).unwrap_or("writer").to_string();
     let writer = req.get("writer").and_then(|w| w.as_str()).map(str::to_string);
 
-    match ctx.db.srv_key_issue(board_id, &app.owner_key, &role, writer.as_deref()).await {
+    match ctx.db.key_issue(board_id, &app.owner_key, &role, writer.as_deref()).await {
         Ok((bucket, secret)) => Ok(json_response(
             StatusCode::CREATED,
             serde_json::json!({"ok": true, "bucket": bucket, "key": secret, "role": role, "writer": writer}),
@@ -814,6 +872,11 @@ pub async fn srv_keys_issue(cx: &Cx, body: Body) -> Result<Response> {
 pub async fn srv_hooks_register(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
+
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
 
     let identity = match authorize_identity(cx, ctx, board_id).await {
         Ok(Some(id)) => id,
@@ -830,7 +893,7 @@ pub async fn srv_hooks_register(cx: &Cx, body: Body) -> Result<Response> {
         return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
@@ -849,7 +912,7 @@ pub async fn srv_hooks_register(cx: &Cx, body: Body) -> Result<Response> {
     };
     let secret = req.get("secret").and_then(|s| s.as_str()).filter(|s| !s.is_empty()).map(str::to_string);
 
-    match ctx.db.srv_hook_register(board_id, &app.owner_key, &url, secret.as_deref()).await {
+    match pool.srv_hook_register(board_id, &app.owner_key, &url, secret.as_deref()).await {
         Ok(()) => Ok(json_response(StatusCode::CREATED, serde_json::json!({"ok": true}))),
         Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
     }
@@ -860,6 +923,11 @@ pub async fn srv_hooks_remove(cx: &Cx) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
     let params = query_params(cx);
+
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
 
     let identity = match authorize_identity(cx, ctx, board_id).await {
         Ok(Some(id)) => id,
@@ -876,14 +944,14 @@ pub async fn srv_hooks_remove(cx: &Cx) -> Result<Response> {
         return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
 
     let url = params.get("url").map(|u| url_decode(u)).filter(|u| !u.is_empty());
     match url {
-        Some(u) => match ctx.db.srv_hook_remove(board_id, &app.owner_key, &u).await {
+        Some(u) => match pool.srv_hook_remove(board_id, &app.owner_key, &u).await {
             Ok(true) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true}))),
             Ok(false) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "hook not found"}))),
             Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
@@ -896,6 +964,11 @@ pub async fn srv_hooks_remove(cx: &Cx) -> Result<Response> {
 pub async fn srv_call(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
+
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
 
     let identity = match authorize_identity(cx, ctx, board_id).await {
         Ok(Some(id)) => id,
@@ -912,7 +985,7 @@ pub async fn srv_call(cx: &Cx, body: Body) -> Result<Response> {
         return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
@@ -942,8 +1015,7 @@ pub async fn srv_call(cx: &Cx, body: Body) -> Result<Response> {
     };
     let timeout_ms = req.get("timeout_ms").and_then(|t| t.as_u64()).unwrap_or(0);
 
-    match ctx
-        .db
+    match pool
         .srv_http_call(board_id, &app.owner_key, &method, &url, &headers, body_str.as_deref(), timeout_ms)
         .await
     {
@@ -966,6 +1038,11 @@ pub async fn srv_rate_config(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
 
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+
     let identity = match authorize_identity(cx, ctx, board_id).await {
         Ok(Some(id)) => id,
         Ok(None) => {
@@ -981,7 +1058,7 @@ pub async fn srv_rate_config(cx: &Cx, body: Body) -> Result<Response> {
         return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"})));
     }
 
-    let app = match ctx.db.srv_app_by_id(board_id).await {
+    let app = match pool.srv_app_by_id(board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
@@ -996,7 +1073,7 @@ pub async fn srv_rate_config(cx: &Cx, body: Body) -> Result<Response> {
     };
 
     if req.get("clear").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return match ctx.db.srv_rate_set(board_id, &app.owner_key, None).await {
+        return match pool.srv_rate_set(board_id, &app.owner_key, None).await {
             Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true}))),
             Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
         };
@@ -1008,14 +1085,18 @@ pub async fn srv_rate_config(cx: &Cx, body: Body) -> Result<Response> {
             cfg.insert(field.to_string(), serde_json::json!(v));
         }
     }
-    match ctx.db.srv_rate_set(board_id, &app.owner_key, Some(&serde_json::Value::Object(cfg).to_string())).await {
+    match pool.srv_rate_set(board_id, &app.owner_key, Some(&serde_json::Value::Object(cfg).to_string())).await {
         Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true}))),
         Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
     }
 }
 
 async fn publish_record_event(ctx: &AppContext, board_id: &str, kind: &str, seq: i64) {
-    let record = match ctx.db.srv_record_get(board_id, seq).await {
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let record = match pool.srv_record_get(board_id, seq).await {
         Ok(Some(record)) => Some(record),
         _ => None,
     };
@@ -1025,10 +1106,10 @@ async fn publish_record_event(ctx: &AppContext, board_id: &str, kind: &str, seq:
 }
 
 async fn enqueue_hook_events(ctx: &AppContext, board_id: &str, event: &str) {
-    match ctx.db.srv_hook_urls(board_id).await {
+    match ctx.db.hook_urls(board_id).await {
         Ok(hooks) => {
             for (url, _) in hooks {
-                let _ = ctx.db.srv_hook_enqueue(board_id, &url, event).await;
+                let _ = ctx.db.hook_enqueue(board_id, &url, event).await;
             }
         }
         Err(e) => tracing::warn!("enqueue_hook_events: urls error: {}", e),
@@ -1043,18 +1124,22 @@ pub async fn srv_record_delete_route(cx: &Cx) -> Result<Response> {
     if let Err(resp) = rate_action(cx, ctx, &board_id, &token, "submit").await {
         return Ok(resp);
     }
+    let pool = match board_pool(ctx, &board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
     let seq: i64 = match path_param::<Seq>(cx).parse() {
         Ok(s) => s,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid seq"}))),
     };
-    match ctx.db.srv_app_by_id(&board_id).await {
+    match pool.srv_app_by_id(&board_id).await {
         Ok(Some(_)) => {}
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     }
     if let Err(resp) = authorize_write(cx, ctx, &board_id, true).await {
         return Ok(resp);
     }
-    match ctx.db.srv_record_delete_one(&board_id, seq).await {
+    match pool.srv_record_delete_one(&board_id, seq).await {
         Ok(true) => {
             let event = crate::realtime::record_event("deleted", &board_id, seq, None);
             ctx.realtime.publish(&event);
@@ -1081,6 +1166,11 @@ pub async fn srv_join(cx: &Cx) -> Result<Response> {
         return Ok(resp);
     }
 
+    let pool = match board_pool(ctx, &board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+
     let conds = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
         let parsed: serde_json::Value = match serde_json::from_str(&f) {
             Ok(v) => v,
@@ -1094,7 +1184,7 @@ pub async fn srv_join(cx: &Cx) -> Result<Response> {
         Vec::new()
     };
 
-    match ctx.db.srv_join_list(&board_id, &conds, limit, offset).await {
+    match pool.srv_join_list(&board_id, &conds, limit, offset).await {
         Ok(rows) => {
             let mut records = Vec::new();
             for (rec, joined) in rows {
@@ -1123,14 +1213,18 @@ pub async fn srv_audit(cx: &Cx) -> Result<Response> {
         Ok(_) => return Ok(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "admin authorization required"}))),
         Err(resp) => return Ok(resp),
     }
-    let app = match ctx.db.srv_app_by_id(&board_id).await {
+    let pool = match board_pool(ctx, &board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let app = match pool.srv_app_by_id(&board_id).await {
         Ok(Some(app)) => app,
         _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
     };
     let params = query_params(cx);
     let since = params.get("since").map(|s| s.to_string()).filter(|s| !s.is_empty());
     let limit: i64 = params.get("limit").and_then(|l| l.parse().ok()).unwrap_or(100).clamp(1, 1000);
-    match ctx.db.srv_audit_list(&board_id, &app.owner_key, since.as_deref(), limit).await {
+    match pool.srv_audit_list(&board_id, &app.owner_key, since.as_deref(), limit).await {
         Ok(rows) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "audit": rows}))),
         Err(e) => {
             tracing::warn!("srv_audit: {}", e);

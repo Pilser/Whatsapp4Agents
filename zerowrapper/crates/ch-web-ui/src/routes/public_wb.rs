@@ -14,7 +14,7 @@ pub async fn public_wb(cx: &Cx) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let slug = path_param::<WbSlug>(cx);
 
-    let snap = match ctx.db.wb_public_snapshot(slug).await {
+    let snap = match ctx.db.public_snapshot(slug).await {
         Ok(Some(s)) => s,
         _ => {
             return Ok(Response::builder()

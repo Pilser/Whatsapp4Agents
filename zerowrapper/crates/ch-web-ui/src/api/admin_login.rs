@@ -51,8 +51,8 @@ pub async fn admin_login(cx: &Cx, body: Body) -> Result<Response> {
             .unwrap());
     }
 
-    match ctx.db.verify_password(phone, password).await {
-        Ok(true) => match ctx.db.get_user(phone).await {
+    match ctx.db.system().verify_password(phone, password).await {
+        Ok(true) => match ctx.db.system().get_user(phone).await {
             Ok(Some(user)) => {
                 let display_name = if user.name.is_empty() {
                     phone.to_string()

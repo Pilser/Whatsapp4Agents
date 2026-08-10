@@ -7,6 +7,7 @@ async fn pool() -> (zw_db::DbPool, std::path::PathBuf) {
     let db_path = dir.join("test.db");
     let pool = zw_db::DbPool::open(db_path.to_str().unwrap()).await.unwrap();
     pool.migrate().await.unwrap();
+    pool.migrate_session().await.unwrap();
     (pool, dir)
 }
 

@@ -1,4 +1,4 @@
-pub const SCHEMA: &str = "
+pub const SYSTEM_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS users (
     id          TEXT PRIMARY KEY,
     external_id TEXT UNIQUE,
@@ -17,6 +17,48 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_active TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS wb_keys (
+    bucket      TEXT PRIMARY KEY,
+    board_id    TEXT NOT NULL,
+    key_hash    TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'reader',
+    writer      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    revoked_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wb_keys_board ON wb_keys(board_id);
+CREATE INDEX IF NOT EXISTS idx_wb_keys_hash ON wb_keys(key_hash);
+
+CREATE TABLE IF NOT EXISTS wb_hook_deliveries (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id      TEXT NOT NULL,
+    url           TEXT NOT NULL,
+    event         TEXT NOT NULL,
+    attempts      INTEGER NOT NULL DEFAULT 0,
+    last_status   TEXT,
+    next_attempt_at TEXT,
+    delivered_at  TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_wb_hook_due_idx ON wb_hook_deliveries(delivered_at, next_attempt_at);
+
+CREATE TABLE IF NOT EXISTS srv_board_index (
+    board_id   TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    owner_key  TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_srv_board_index_session ON srv_board_index(session_id);
+
+CREATE TABLE IF NOT EXISTS wb_public_index (
+    slug       TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    page_no    INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+";
+
+pub const SESSION_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS whiteboard_pages (
     session_id TEXT NOT NULL,
     page_no    INTEGER NOT NULL,
@@ -43,7 +85,6 @@ CREATE TABLE IF NOT EXISTS whiteboard_public_pages (
     pins       TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
 CREATE INDEX IF NOT EXISTS idx_wb_public_session ON whiteboard_public_pages(session_id);
 
 CREATE TABLE IF NOT EXISTS wb_apps (
@@ -70,18 +111,6 @@ CREATE INDEX IF NOT EXISTS idx_wb_records_board ON wb_records(board_id, seq);
 CREATE INDEX IF NOT EXISTS idx_wb_records_owner ON wb_records(owner_key);
 CREATE INDEX IF NOT EXISTS idx_wb_records_fts ON wb_records USING fts (payload) WITH (tokenizer='ngram');
 
-CREATE TABLE IF NOT EXISTS wb_keys (
-    bucket      TEXT PRIMARY KEY,
-    board_id    TEXT NOT NULL,
-    key_hash    TEXT NOT NULL,
-    role        TEXT NOT NULL DEFAULT 'reader',
-    writer      TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    revoked_at  TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_wb_keys_board ON wb_keys(board_id);
-CREATE INDEX IF NOT EXISTS idx_wb_keys_hash ON wb_keys(key_hash);
-
 CREATE TABLE IF NOT EXISTS wb_hooks (
     board_id TEXT NOT NULL,
     url      TEXT NOT NULL,
@@ -90,19 +119,6 @@ CREATE TABLE IF NOT EXISTS wb_hooks (
     PRIMARY KEY (board_id, url)
 );
 CREATE INDEX IF NOT EXISTS idx_wb_hooks_board ON wb_hooks(board_id);
-
-CREATE TABLE IF NOT EXISTS wb_hook_deliveries (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    board_id      TEXT NOT NULL,
-    url           TEXT NOT NULL,
-    event         TEXT NOT NULL,
-    attempts      INTEGER NOT NULL DEFAULT 0,
-    last_status   TEXT,
-    next_attempt_at TEXT,
-    delivered_at  TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_wb_hook_due_idx ON wb_hook_deliveries(delivered_at, next_attempt_at);
 
 CREATE TABLE IF NOT EXISTS wb_links (
     board_id     TEXT PRIMARY KEY,
@@ -123,10 +139,13 @@ CREATE TABLE IF NOT EXISTS wb_audit (
 CREATE INDEX IF NOT EXISTS idx_wb_audit_board ON wb_audit(board_id, id);
 ";
 
-pub const MIGRATIONS: &[&str] = &[
+pub const SYSTEM_MIGRATIONS: &[&str] = &[
     "ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'public';",
     "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';",
+];
+
+pub const SESSION_MIGRATIONS: &[&str] = &[
     "ALTER TABLE wb_apps ADD COLUMN unique_key TEXT;",
     "ALTER TABLE wb_records ADD COLUMN writer TEXT;",
     "DROP INDEX IF EXISTS idx_wb_records_fts; \

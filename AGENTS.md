@@ -6,10 +6,11 @@ This is a Rust-based project in `zerowrapper/`. There is a reference frontend at
 
 ### Build commands
 - **Only `cargo check`** for verifying compilation during development
-- **Only `cargo build --release`** when a release binary is needed
+- **Never** run `cargo build` or `cargo build --release` unless a release binary is explicitly requested
 - **Never** run `cargo clean` or delete the `target/` directory
 - Run `cargo check` after editing any Rust file
 - For the existing `web/` frontend, use `bun run build`
+- Sub-agents MUST follow the same build rules: only `cargo check` to verify compilation, never `cargo build` / `cargo build --release` / `cargo clean`, and never touch `target/`.
 
 ### Workflow
 - When you detect you are given a summary from a recent session, do NOT rush to implement in code. First verify with the user and get a go-ahead.

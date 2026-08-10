@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use zw_core::{ChannelRegistryHandle, ZeroClawHandle};
-use zw_db::DbPool;
+use zw_db::SessionStore;
 use zw_db::rate::RateLimiter;
 use zw_cache::CacheManager;
 use crate::config::{SiteSettings, LandingData};
@@ -9,7 +9,7 @@ use crate::config::{SiteSettings, LandingData};
 pub struct AppContext {
     pub registry: ChannelRegistryHandle,
     pub zeroclaw: Arc<ZeroClawHandle>,
-    pub db: DbPool,
+    pub db: SessionStore,
     pub cache: Arc<CacheManager>,
     pub rates: Arc<RateLimiter>,
     pub agent: String,
@@ -26,7 +26,7 @@ impl AppContext {
     pub fn new(
         registry: ChannelRegistryHandle,
         zeroclaw: Arc<ZeroClawHandle>,
-        db: DbPool,
+        db: SessionStore,
         cache: Arc<CacheManager>,
         agent: &str,
         upload_dir: std::path::PathBuf,

@@ -8,6 +8,7 @@ async fn fts_index_works() {
     let db_path = dir.join("test.db");
     let pool = zw_db::DbPool::open(db_path.to_str().unwrap()).await.unwrap();
     pool.migrate().await.unwrap();
+    pool.migrate_session().await.unwrap();
 
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     pool.srv_record_insert(&board, &serde_json::json!({"name": "Dell XPS 13", "brand": "Dell", "body": "the quick brown fox"}), None, false).await.unwrap();

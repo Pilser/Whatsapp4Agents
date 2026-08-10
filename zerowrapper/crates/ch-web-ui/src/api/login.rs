@@ -41,7 +41,7 @@ pub async fn login(cx: &Cx) -> Result<Response> {
             .unwrap());
     }
 
-    match ctx.db.get_user(&phone).await {
+    match ctx.db.system().get_user(&phone).await {
         Ok(Some(user)) => {
             let display_name = if user.name.is_empty() {
                 phone.clone()

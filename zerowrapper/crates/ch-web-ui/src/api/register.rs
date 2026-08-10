@@ -47,7 +47,7 @@ pub async fn register(cx: &Cx, body: Body) -> Result<Response> {
 
     let name = parsed.get("name").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
 
-    match ctx.db.upsert_user(phone, name, None).await {
+    match ctx.db.system().upsert_user(phone, name, None).await {
         Ok(_) => {
             let display_name = name.unwrap_or(phone);
             Ok(Response::builder()

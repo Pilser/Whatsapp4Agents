@@ -10,10 +10,12 @@ pub mod netguard;
 pub mod rate;
 pub mod serverless;
 pub mod sessions;
+pub mod session_store;
 pub mod ttl;
 pub mod users;
 pub mod whiteboard;
 
+pub use session_store::SessionStore;
 pub use users::AccountSeed;
 
 use std::sync::Arc;
@@ -44,8 +46,17 @@ impl DbPool {
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock().await;
-        conn.execute_batch(migrations::SCHEMA).await?;
-        for migration in migrations::MIGRATIONS {
+        conn.execute_batch(migrations::SYSTEM_SCHEMA).await?;
+        for migration in migrations::SYSTEM_MIGRATIONS {
+            let _ = conn.execute_batch(migration).await;
+        }
+        Ok(())
+    }
+
+    pub async fn migrate_session(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock().await;
+        conn.execute_batch(migrations::SESSION_SCHEMA).await?;
+        for migration in migrations::SESSION_MIGRATIONS {
             let _ = conn.execute_batch(migration).await;
         }
         Ok(())

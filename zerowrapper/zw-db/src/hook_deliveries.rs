@@ -115,8 +115,7 @@ impl DbPool {
         Ok(())
     }
 
-    pub async fn srv_hook_reschedule(&self, board_id: &str, owner: &str, url: &str) -> anyhow::Result<i64> {
-        self.hooks_check_owned(board_id, owner).await?;
+    pub async fn srv_hook_reschedule(&self, board_id: &str, _owner: &str, url: &str) -> anyhow::Result<i64> {
         let conn = self.conn().await;
         let affected = conn
             .execute(
@@ -128,8 +127,7 @@ impl DbPool {
         Ok(affected as i64)
     }
 
-    pub async fn srv_hook_deliveries(&self, board_id: &str, owner: &str, url: Option<&str>) -> anyhow::Result<Vec<SrvDelivery>> {
-        self.hooks_check_owned(board_id, owner).await?;
+    pub async fn srv_hook_deliveries(&self, board_id: &str, _owner: &str, url: Option<&str>) -> anyhow::Result<Vec<SrvDelivery>> {
         let conn = self.conn().await;
         let sql = match url {
             Some(_) => "SELECT id, board_id, url, event, attempts, last_status, delivered_at, created_at \
