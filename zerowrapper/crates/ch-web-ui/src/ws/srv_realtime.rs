@@ -70,7 +70,7 @@ pub async fn handle_srv_ws(
     }
 }
 
-fn filter_matches(filter: &Option<serde_json::Value>, payload: &serde_json::Value) -> bool {
+pub fn filter_matches(filter: &Option<serde_json::Value>, payload: &serde_json::Value) -> bool {
     let Some(filter) = filter else {
         return true;
     };

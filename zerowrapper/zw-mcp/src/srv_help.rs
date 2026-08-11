@@ -6,13 +6,17 @@ pub fn verb_help(group: &str, verb: &str) -> Option<&'static str> {
         ("apps", "schema") => Some(APPS_SCHEMA),
         ("apps", "update") => Some(APPS_UPDATE),
         ("apps", "delete") => Some(APPS_DELETE),
+        ("apps", "export") => Some(APPS_EXPORT),
+        ("apps", "import") => Some(APPS_IMPORT),
         ("apps", "keys") => Some(APPS_KEYS),
         ("apps", "hooks") => Some(APPS_HOOKS),
         ("apps", "rate") => Some(APPS_RATE),
         ("apps", "ttl") => Some(APPS_TTL),
         ("apps", "link") => Some(APPS_LINK),
         ("apps", "audit") => Some(APPS_AUDIT),
+        ("apps", "jobs") => Some(APPS_JOBS),
         ("records", "submit") => Some(RECORDS_SUBMIT),
+        ("records", "bulk") => Some(RECORDS_BULK),
         ("records", "list") => Some(RECORDS_LIST),
         ("records", "get") => Some(RECORDS_GET),
         ("records", "update") => Some(RECORDS_UPDATE),
@@ -75,6 +79,44 @@ const APPS_DELETE: &str = "\
 srv apps delete <board_id>\n\
 \n\
 permanently deletes a board and all of its records, files, hooks, keys and audit trail. Irreversible.\n";
+
+const APPS_EXPORT: &str = "\
+srv apps export <board_id> [--out <path>]\n\
+\n\
+dumps the whole board as JSON: app config (title, schema, public_reads, unique_key), rate, ttl, audit flag,\n\
+link, hooks (urls only; secrets are not recoverable) and every record payload.\n\
+\n\
+  --out <path>   write the dump to a file instead of returning it inline (large boards)\n\
+restore with 'srv apps import' (creates a NEW board). Uploaded files are listed by metadata only.\n";
+
+const APPS_IMPORT: &str = "\
+srv apps import '<json>|<path>|-' [--out <path>]\n\
+\n\
+creates a new app/board from a dump produced by 'srv apps export'. The source can be inline JSON,\n\
+a file path, or '-' to read the dump from stdin. Rate, ttl, audit, link and hooks are restored where possible;\n\
+webhook secrets are re-registered without a secret. Returns the new board_id.\n";
+
+const APPS_JOBS: &str = "\
+srv apps jobs <board_id> add --name <n> --schedule '<cron|@every 30s>' --action '<json>' | list | remove <job_id>\n\
+\n\
+scheduled jobs: a global worker runs due jobs and reschedules them.\n\
+\n\
+sub-verbs:\n\
+  add --name <n> --schedule <schedule> --action <json>\n\
+      schedules a job on a board. schedule is a 5-field cron ('min hour dom month dow', * */n a-b a,b,c)\n\
+      or an interval '@every <N><s|m|h|d>' (e.g. '@every 30s', '@every 5m', '@every 1h').\n\
+      action json:\n\
+        {\"type\":\"http\",\"url\":...,\"method\":\"GET\",\"headers\":[[\"k\",\"v\"]],\"body\":...,\"timeout_ms\":15000}\n\
+            -> performs an outbound request (SSRF guard); the response is NOT stored.\n\
+        {\"type\":\"poll\",\"url\":...,\"path\":\"$.field\",...}\n\
+            -> performs the request, then extracts 'path' from the JSON response and inserts the\n\
+               resulting object as a NEW record on this board (writer = job name).\n\
+               This is how an app 'listens' to an external API on a schedule.\n\
+  list                show the board's jobs (id, name, schedule, next_run_at, last_run status)\n\
+  remove <job_id>     delete a job by its numeric id\n\
+examples:\n\
+  srv apps jobs <board_id> add --name refresh --schedule '@every 5m' --action '{\"type\":\"http\",\"url\":\"https://api.example.com/ping\"}'\n\
+  srv apps jobs <board_id> add --name sync --schedule '*/10 * * * *' --action '{\"type\":\"poll\",\"url\":\"https://api.example.com/feed\",\"path\":\"$.data\"}'\n";
 
 const APPS_KEYS: &str = "\
 srv apps keys <board_id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket>\n\
@@ -158,6 +200,13 @@ flags:\n\
                   instead of rejecting the duplicate\n\
 example: srv records submit <board_id> '{\"sku\":\"A1\",\"price\":10}' --writer alice\n";
 
+const RECORDS_BULK: &str = "\
+srv records bulk <board_id> '<json array>' [--writer <id>] [--upsert]\n\
+\n\
+inserts many records in one call. Each object is validated against the board's schema;\n\
+a failure aborts the whole batch. Returns the list of new seqs.\n\
+example: srv records bulk <board_id> '[{\"sku\":\"A1\"},{\"sku\":\"A2\"},{\"sku\":\"A3\"}]'\n";
+
 const RECORDS_LIST: &str = "\
 srv records list <board_id> [--limit N] [--offset N]\n\
 \n\
@@ -185,12 +234,13 @@ ops json:\n\
 returns the resulting validated payload.\n";
 
 const RECORDS_QUERY: &str = "\
-srv records query <board_id> '<$.path>' [--eq value] | srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+srv records query <board_id> '<$.path>' [--eq value] | srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc]* [--limit N] [--offset N]\n\
 \n\
 reads records by JSONPath or by a filter object.\n\
   path form:   query <board_id> '$.name'            -> all records where $.name exists\n\
                query <board_id> '$.name' --eq alice -> equal to 'alice'\n\
   filter form: query <board_id> --filter '{\"$.price\":{\"gte\":500}}'\n\
+  --order '<$.path>' asc|desc   repeatable: multi-column sorting, applied left to right\n\
 filter ops: eq neq gt gte lt lte contains not_contains in search\n\
 filter forms: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n";
 
@@ -217,9 +267,11 @@ computes an aggregate over the board's records.\n\
 example: srv records aggregate <board_id> --op sum --field '$.price' --group_by '$.category'\n";
 
 const RECORDS_DELETE: &str = "\
-srv records delete <board_id> [--seq N | --all]\n\
+srv records delete <board_id> [--seq N | --all | --filter '<json>']\n\
 \n\
-deletes one record (--seq N) or every record (--all).\n";
+deletes one record (--seq N), every record (--all), or every record matching a filter (--filter '<json>').\n\
+--filter uses the same ops as query: delete <board_id> --filter '{\"$.status\":{\"eq\":\"archived\"}}'\n\
+returns the number of rows removed for --filter.\n";
 
 const RECORDS_AUDIT: &str = "\
 srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\

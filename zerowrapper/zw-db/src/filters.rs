@@ -382,7 +382,7 @@ impl DbPool {
         &self,
         board_id: &str,
         conds: &[FilterCond],
-        order: Option<(&str, bool)>,
+        orders: &[(&str, bool)],
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<Vec<crate::serverless::SrvRecord>> {
@@ -392,17 +392,21 @@ impl DbPool {
             None => where_sql,
         };
         let mut sql = format!("SELECT seq, payload, created_at, writer FROM wb_records WHERE {where_sql}");
-        match order {
-            Some((field, desc)) => {
+        if !orders.is_empty() {
+            let mut terms = Vec::new();
+            for (field, desc) in orders {
                 let op = params.len() + 1;
-                params.push(Value::from(field));
-                let dir = if desc { "DESC" } else { "ASC" };
-                sql.push_str(&format!(" ORDER BY json_extract(payload, ?{op}) {dir}, seq DESC"));
+                params.push(Value::from(*field));
+                let dir = if *desc { "DESC" } else { "ASC" };
+                terms.push(format!("json_extract(payload, ?{op}) {dir}"));
             }
-            None => match search_ph {
+            terms.push("seq DESC".to_string());
+            sql.push_str(&format!(" ORDER BY {}", terms.join(", ")));
+        } else {
+            match search_ph {
                 Some(q) => sql.push_str(&format!(" ORDER BY fts_score(payload, ?{q}) DESC")),
                 None => sql.push_str(" ORDER BY seq DESC"),
-            },
+            }
         }
         let limit = limit.clamp(1, 500);
         let lp = params.len() + 1;

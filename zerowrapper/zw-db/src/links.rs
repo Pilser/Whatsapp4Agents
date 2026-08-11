@@ -158,7 +158,7 @@ impl DbPool {
         offset: i64,
     ) -> anyhow::Result<Vec<(SrvRecord, Option<JVal>)>> {
         let link = self.srv_link_get(child_board).await?;
-        let records = self.srv_record_filter(child_board, conds, None, limit, offset).await?;
+        let records = self.srv_record_filter(child_board, conds, &[], limit, offset).await?;
         let Some(link) = link else {
             return Ok(records.into_iter().map(|r| (r, None)).collect());
         };

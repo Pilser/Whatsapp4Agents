@@ -60,4 +60,20 @@ mod tests {
         assert!(!valid_url("ftp://example.com/x"));
         assert!(!valid_url("example.com/x"));
     }
+
+    #[test]
+    fn valid_url_allows_public_targets() {
+        assert!(valid_url("http://8.8.8.8/x"));
+        assert!(valid_url("https://[2001:db8::1]/x"));
+        assert!(valid_url("https://user:pass@example.com/x"));
+        assert!(valid_url("http://example.com:8443/x"));
+    }
+
+    #[test]
+    fn valid_url_rejects_malformed() {
+        assert!(!valid_url(""));
+        assert!(!valid_url("https://"));
+        assert!(!valid_url("https:///x"));
+        assert!(!valid_url("http://:8080/x"), "empty host rejected");
+    }
 }

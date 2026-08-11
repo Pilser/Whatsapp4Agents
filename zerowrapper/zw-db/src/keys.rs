@@ -41,6 +41,30 @@ fn valid_role(role: &str) -> bool {
     matches!(role, "reader" | "writer" | "list" | "admin")
 }
 
+impl DbPool {
+    async fn keys_check_owned(&self, board_id: &str, owner: &str) -> anyhow::Result<()> {
+        let conn = self.conn().await;
+        let mut rows = conn
+            .query(
+                "SELECT owner_key FROM srv_board_index WHERE board_id = ?1",
+                Params::Positional(vec![Value::from(board_id)]),
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => match row.get_value(0)? {
+                Value::Text(s) => {
+                    if s != owner {
+                        anyhow::bail!("board {board_id} is not owned by {owner}");
+                    }
+                }
+                _ => return Err(anyhow::anyhow!("invalid owner_key")),
+            },
+            None => anyhow::bail!("board {board_id} not found"),
+        }
+        Ok(())
+    }
+}
+
 async fn read_key(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApiKey>> {
     if let Some(row) = rows.next().await? {
         let bucket = match row.get_value(0)? {
@@ -74,7 +98,8 @@ async fn read_key(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApiKey>> {
 }
 
 impl DbPool {
-    pub async fn srv_key_issue(&self, board_id: &str, _owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
+    pub async fn srv_key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
+        self.keys_check_owned(board_id, owner).await?;
         if !valid_role(role) {
             anyhow::bail!("invalid role '{role}' (expected reader, writer, list, admin)");
         }
@@ -95,7 +120,8 @@ impl DbPool {
         Ok((bucket, secret))
     }
 
-    pub async fn srv_key_list(&self, board_id: &str, _owner: &str) -> anyhow::Result<Vec<SrvApiKey>> {
+    pub async fn srv_key_list(&self, board_id: &str, owner: &str) -> anyhow::Result<Vec<SrvApiKey>> {
+        self.keys_check_owned(board_id, owner).await?;
         let conn = self.conn().await;
         let mut rows = conn
             .query(
@@ -111,7 +137,8 @@ impl DbPool {
         Ok(out)
     }
 
-    pub async fn srv_key_revoke(&self, board_id: &str, _owner: &str, bucket: &str) -> anyhow::Result<bool> {
+    pub async fn srv_key_revoke(&self, board_id: &str, owner: &str, bucket: &str) -> anyhow::Result<bool> {
+        self.keys_check_owned(board_id, owner).await?;
         let conn = self.conn().await;
         let affected = conn
             .execute(

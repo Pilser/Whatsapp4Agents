@@ -28,8 +28,9 @@ async fn main() -> anyhow::Result<()> {
         if let Some(db_path) = db_path {
             let db = zw_db::DbPool::open(&db_path).await?;
             db.migrate().await?;
-            let store = zw_db::SessionStore::new(whiteboard_dir.clone(), db);
-            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(store);
+            let store = zw_db::SessionStore::new(whiteboard_dir.clone(), db.clone());
+            let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir.clone(), cache.clone(), std::time::Duration::from_millis(500)).with_db(store);
+            let materials = zw_materials::TemplateStore::new(whiteboard_dir, db);
             mcp.register_provider(Box::new(
                 mcp_web_files_render::WebFilesRenderProvider::new(cache.clone())
             )).await;
@@ -38,6 +39,9 @@ async fn main() -> anyhow::Result<()> {
             )).await;
             mcp.register_provider(Box::new(
                 zw_mcp::manage_whiteboard::ManageWhiteboardProvider::new(wb)
+            )).await;
+            mcp.register_provider(Box::new(
+                zw_mcp::manage_materials::ManageMaterialsProvider::new(materials)
             )).await;
         } else {
             let wb = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500));
@@ -72,7 +76,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("whiteboard dir: {}", whiteboard_dir.display());
 
     let store = zw_db::SessionStore::new(whiteboard_dir.clone(), db.clone());
-    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir, cache.clone(), std::time::Duration::from_millis(500)).with_db(store.clone());
+    let whiteboard = zw_whiteboard::WhiteboardHandle::new(whiteboard_dir.clone(), cache.clone(), std::time::Duration::from_millis(500)).with_db(store.clone());
     let _wb_task = whiteboard.spawn();
 
     let mcp = zw_mcp::McpRegistry::new();
@@ -84,6 +88,10 @@ async fn main() -> anyhow::Result<()> {
     )).await;
     mcp.register_provider(Box::new(
         zw_mcp::manage_whiteboard::ManageWhiteboardProvider::new(whiteboard.clone())
+    )).await;
+    let materials = zw_materials::TemplateStore::new(whiteboard_dir.clone(), db.clone());
+    mcp.register_provider(Box::new(
+        zw_mcp::manage_materials::ManageMaterialsProvider::new(Clone::clone(&materials))
     )).await;
 
     if config.mcp.is_none() {
@@ -167,9 +175,11 @@ async fn main() -> anyhow::Result<()> {
         landing,
     )
     .with_whiteboard(whiteboard.clone())
+    .with_materials(materials)
     .with_mcp(mcp.providers());
     let _webhook_worker = ch_web_ui::webhooks::spawn_webhook_worker(store.clone());
     let _ttl_worker = ch_web_ui::ttl_sweeper::spawn_ttl_sweeper(store.clone(), std::time::Duration::from_secs(30));
+    let _scheduler = ch_web_ui::scheduler::spawn_scheduler(store.clone());
     let ui_handle = tokio::spawn(async move {
         if let Err(e) = ch_web_ui::app::start_on(primary_bind, ui_ctx).await {
             tracing::error!("ch-web-ui exited: {}", e);

@@ -160,6 +160,28 @@ impl DbPool {
         Ok(board_id)
     }
 
+    pub async fn srv_app_create_with_id(&self, board_id: &str, owner: &str, title: &str, schema_json: Option<&str>, public_reads: bool, unique_key: Option<&str>) -> anyhow::Result<()> {
+        let conn = self.conn().await;
+        let b = sq(board_id);
+        let o = sq(owner);
+        let t = sq(title);
+        let s = match schema_json {
+            Some(s) => format!("'{}'", sq(s)),
+            None => "NULL".to_string(),
+        };
+        let u = match unique_key {
+            Some(u) => format!("'{}'", sq(u)),
+            None => "NULL".to_string(),
+        };
+        let p = if public_reads { 1 } else { 0 };
+        let sql = format!(
+            "INSERT INTO wb_apps (board_id, owner_key, title, schema_json, public_reads, unique_key) \
+             VALUES ('{b}', '{o}', '{t}', {s}, {p}, {u})"
+        );
+        conn.execute(&sql, Params::Positional(vec![])).await?;
+        Ok(())
+    }
+
     async fn read_app_raw(&self, board_id: &str) -> anyhow::Result<Option<SrvApp>> {
         let conn = self.conn().await;
         let mut rows = conn
@@ -345,6 +367,7 @@ impl DbPool {
             .srv_app_by_id(board_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
+        self.srv_validate(board_id, payload).await?;
         let unique_val = match app.unique_key.as_deref() {
             Some(key) => self.unique_from_payload(board_id, key, payload).await?,
             None => None,
@@ -391,6 +414,26 @@ impl DbPool {
         drop(conn);
         self.srv_audit_append(board_id, "created", None, writer, Some(&crate::audit::audit_hash(payload))).await?;
         Ok(seq)
+    }
+
+    /// Insert many records at once (one seq per record, in order). Each record is
+    /// validated against the board schema; a failure aborts the batch.
+    pub async fn srv_record_bulk_insert(
+        &self,
+        board_id: &str,
+        records: &[serde_json::Value],
+        writer: Option<&str>,
+        upsert: bool,
+    ) -> anyhow::Result<Vec<i64>> {
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut seqs = Vec::with_capacity(records.len());
+        for payload in records {
+            let seq = self.srv_record_insert(board_id, payload, writer, upsert).await?;
+            seqs.push(seq);
+        }
+        Ok(seqs)
     }
 
     /// Replace an existing record's payload (identity and created_at preserved).
@@ -599,9 +642,22 @@ impl DbPool {
         Ok(())
     }
 
-    /// Deletes a single record, returning whether a row was actually removed.
-    pub async fn srv_record_delete_one(&self, board_id: &str, seq: i64) -> anyhow::Result<bool> {
+    /// Delete every record matching the given filter conditions, returning the
+    /// number of rows removed.
+    pub async fn srv_record_delete_filter(&self, board_id: &str, conds: &[FilterCond]) -> anyhow::Result<u64> {
+        let (where_sql, mut params, _) = srv_filter_where(board_id, conds);
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND {where_sql}"),
+            None => where_sql,
+        };
+        let sql = format!("DELETE FROM wb_records WHERE {where_sql}");
         let conn = self.conn().await;
+        let affected = conn.execute(&sql, Params::Positional(params)).await?;
+        Ok(affected as u64)
+    }
+
+    /// Deletes a single record, returning whether a row was actually removed.
+    pub async fn srv_record_delete_one(&self, board_id: &str, seq: i64) -> anyhow::Result<bool> {        let conn = self.conn().await;
         let affected = conn
             .execute(
                 "DELETE FROM wb_records WHERE board_id = ?1 AND seq = ?2",

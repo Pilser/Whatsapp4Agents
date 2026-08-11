@@ -99,7 +99,6 @@ impl DbPool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[tokio::test]
     async fn http_call_rejects_private_targets_and_bad_method() {
@@ -107,6 +106,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let pool = crate::DbPool::open(dir.join("test.db").to_str().unwrap()).await.unwrap();
         pool.migrate().await.unwrap();
+        pool.migrate_session().await.unwrap();
         let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
 
         let err = pool.srv_http_call(&board, "owner", "GET", "http://169.254.169.254/latest/meta-data/", &[], None, 0).await;

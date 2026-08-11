@@ -9,7 +9,7 @@ use zw_db::SessionStore;
 const USAGE: &str =
     "usage: srv <group> <verb> [args]\n\
      groups:\n\
-       apps      manage the app/board itself (create, schema, keys, hooks, rate, ttl, link, audit)\n\
+       apps      manage the app/board itself (create, schema, keys, hooks, rate, ttl, link, audit, jobs, export/import)\n\
        records   read/write/search/aggregate the records, call external APIs\n\
        files     list/download uploaded files\n\
      \n\
@@ -20,29 +20,35 @@ const USAGE: &str =
        srv apps schema <board_id>\n\
        srv apps update <board_id> [--title \"<title>\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
        srv apps delete <board_id>\n\
+       srv apps export <board_id> [--out <path>]\n\
+       srv apps import '<json>|<path>|-' [--out <path>]\n\
        srv apps keys <board_id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket>\n\
        srv apps hooks <board_id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url>\n\
        srv apps rate <board_id> '<{\"submit\":60,...}>' | srv apps rate <board_id> --clear\n\
        srv apps ttl <board_id> [<seconds>] [--ttl-until '<$.path>'] | srv apps ttl <board_id> --clear\n\
        srv apps link <board_id> --on '$.k' --to <parent> --via '$.k' | srv apps link <board_id> --clear\n\
        srv apps audit <board_id> on|off | srv apps audit <board_id> (list)\n\
+       srv apps jobs <board_id> add --name <n> --schedule '<cron|@every 30s>' --action '<json>' | list | remove <job_id>\n\
      records:\n\
        srv records submit <board_id> <json> [--writer <id>] [--upsert]\n\
+       srv records bulk <board_id> '<json array>' [--writer <id>] [--upsert]\n\
        srv records list <board_id> [--limit N] [--offset N]\n\
        srv records get <board_id> --seq N\n\
        srv records update <board_id> <seq> '<json>' [--writer <id>]\n\
        srv records patch <board_id> <seq> '<ops>'\n\
        srv records query <board_id> '<$.path>' [--eq value]\n\
-       srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+       srv records query <board_id> --filter '<json>' [--order '<$.path>' asc|desc]* [--limit N] [--offset N]\n\
        srv records search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
        srv records count <board_id>\n\
        srv records aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
-       srv records delete <board_id> [--seq N | --all]\n\
+       srv records delete <board_id> [--seq N | --all | --filter '<json>']\n\
        srv records audit <board_id> [--since <iso-ts>] [--limit N]\n\
        srv records call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
      filter ops: eq neq gt gte lt lte contains not_contains in search\n\
      filter json: {\"field\":\"$.price\",\"op\":\"gte\",\"value\":500} | {\"$.price\":{\"gte\":500}} | {\"search\":\"q\",\"price\":{\"gte\":100}}\n\
      search = ranked full-text (BM25) across the whole record payload, combinable with other ops.\n\
+     jobs action json: {\"type\":\"http\",\"url\":...,\"method\":\"GET\",\"headers\":[[\"k\",\"v\"]],\"body\":...,\"timeout_ms\":15000}\n\
+     jobs action type poll: {\"type\":\"poll\",\"url\":...,\"path\":\"$.field\",...} inserts the extracted object as a new record.\n\
      files:\n\
        srv files list <board_id>\n\
        srv files get <board_id> <file_id> --out <path>";
@@ -57,26 +63,33 @@ const APPS_USAGE: &str =
      schema <board_id>\n\
      update <board_id> [--title \"t\"] [--json <schema> | --clear-schema] [--public-reads on|off] [--unique '<$.path>' | --clear-unique]\n\
      delete <board_id>\n\
+     export <board_id> [--out <path>]\n\
+     import '<json>|<path>|-' (creates a new app from a dump; stdin when '-'; reads a file when the path exists)\n\
      keys <board_id> list | issue --role writer|reader|admin [--writer <id>] | revoke --bucket <bucket>\n\
      hooks <board_id> register <url> [--secret <s>] | list | remove <url> | deliveries [--url <u>] | replay <url>\n\
      rate <board_id> '<{\"submit\":60,...}>' | rate <board_id> --clear\n\
      ttl <board_id> [<seconds>] [--ttl-until '<$.path>'] | ttl <board_id> --clear\n\
      link <board_id> --on '$.k' --to <parent> --via '$.k' | link <board_id> --clear\n\
-     audit <board_id> on|off | audit <board_id> (list)\n";
+     audit <board_id> on|off | audit <board_id> (list)\n\
+     jobs <board_id> add --name <n> --schedule '<cron|@every 30s>' --action '<json>' | list | remove <job_id>\n\
+     cron: 5 fields (min hour dom month dow); * */n a-b a,b,c; or '@every <N><s|m|h|d>'.\n\
+     jobs action: {\"type\":\"http\",\"url\":...,\"method\":\"GET\",\"headers\":[[\"k\",\"v\"]],\"body\":...,\"timeout_ms\":15000}\n\
+     jobs action type \"poll\": additionally takes \"path\" (dotted JSON path) and stores the extracted object as a record.\n";
 
 const RECORDS_USAGE: &str =
     "srv records <verb> [args]\n\
      submit <board_id> <json> [--writer <id>] [--upsert]\n\
+     bulk <board_id> '<json array>' [--writer <id>] [--upsert]\n\
      list <board_id> [--limit N] [--offset N]\n\
      get <board_id> --seq N\n\
      update <board_id> <seq> '<json>' [--writer <id>]\n\
      patch <board_id> <seq> '<ops>'\n\
      query <board_id> '<$.path>' [--eq value]\n\
-     query <board_id> --filter '<json>' [--order '<$.path>' asc|desc] [--limit N] [--offset N]\n\
+     query <board_id> --filter '<json>' [--order '<$.path>' asc|desc]* [--limit N] [--offset N]\n\
      search <board_id> '<query>' [--limit N] [--offset N] [--hl]\n\
      count <board_id>\n\
      aggregate <board_id> --op sum|avg|min|max|count --field '<$.path>' [--group_by '<$.path>'] [--filter '<json>']\n\
-     delete <board_id> [--seq N | --all]\n\
+     delete <board_id> [--seq N | --all | --filter '<json>']\n\
      audit <board_id> [--since <iso-ts>] [--limit N]\n\
      call <board_id> <url> [--method GET|POST|PUT|PATCH|DELETE] [--header 'Name: Value']* [--body '<json>'] [--timeout N]\n\
      query <path> uses JSONPath: '<$.name>', '<$.a.b>', '<$.arr[0]>' (leading $ required).\n\
@@ -115,15 +128,22 @@ fn has_flag(args: &[&String], flag: &str) -> bool {
     args.iter().any(|t| t.as_str() == flag)
 }
 
-fn order_from(args: &[&String]) -> Option<(String, bool)> {
-    let idx = args.iter().position(|t| t.as_str() == "--order")?;
-    let path = args.get(idx + 1).map(|p| unquote(p)).filter(|p| !p.is_empty())?;
-    let desc = match args.get(idx + 2).map(|d| d.as_str()) {
-        Some("asc") => false,
-        Some("desc") => true,
-        _ => false,
-    };
-    Some((path, desc))
+fn orders_from(args: &[&String]) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for (i, tok) in args.iter().enumerate() {
+        if tok.as_str() != "--order" {
+            continue;
+        }
+        let Some(path) = args.get(i + 1).map(|p| unquote(p)).filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        let desc = match args.get(i + 2).map(|d| d.as_str()) {
+            Some("desc") => true,
+            _ => false,
+        };
+        out.push((path, desc));
+    }
+    out
 }
 
 fn split_search(conds: &[zw_db::filters::FilterCond]) -> Option<(String, Vec<zw_db::filters::FilterCond>)> {
@@ -312,6 +332,147 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps delete", "srv apps delete <board_id>"))?;
             Ok(json!({ "status": "ok", "deleted": true }))
+        }
+        "export" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps export <board_id> [--out <path>]", "srv apps export <board_id>")
+            })?;
+            let (app, pool) = require_board(store, board_id, sid, raw).await?;
+            let rate = pool
+                .srv_rate_config(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+            let ttl = pool
+                .srv_ttl_get(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+            let audit = pool
+                .srv_audit_enabled(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+            let link = pool
+                .srv_link_get(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+            let hooks = pool
+                .srv_hook_list(board_id, sid)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+            let mut records: Vec<Value> = Vec::new();
+            let mut offset = 0i64;
+            loop {
+                let batch = pool
+                    .srv_record_list(board_id, 500, None, offset)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id>"))?;
+                if batch.is_empty() {
+                    break;
+                }
+                let n = batch.len() as i64;
+                records.extend(batch.into_iter().map(|r| serde_json::to_value(&r).unwrap_or(Value::Null)));
+                offset += n;
+            }
+            let dump = json!({
+                "format": "waos-srv-app",
+                "app": app,
+                "rate": rate,
+                "ttl": ttl,
+                "audit": audit,
+                "link": link,
+                "hooks": hooks,
+                "records": records,
+            });
+            if let Some(out) = val_after(args, "--out") {
+                std::fs::write(&out, serde_json::to_string_pretty(&dump).unwrap_or_default())
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps export", "srv apps export <board_id> --out <path>"))?;
+                Ok(json!({ "status": "ok", "board_id": board_id, "records": records.len(), "wrote": out }))
+            } else {
+                Ok(json!({ "status": "ok", "dump": dump }))
+            }
+        }
+        "import" => {
+            let src = args
+                .first()
+                .map(|s| unquote(s))
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| err_json("missing '<json>|<path>|-'", raw, "srv apps import '<json>|<path>|-'", "srv apps import dump.json"))?;
+            let text = if src == "-" {
+                let mut buf = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import -"))?;
+                buf
+            } else if Path::new(&src).is_file() {
+                std::fs::read_to_string(&src)
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <path>"))?
+            } else {
+                src.clone()
+            };
+            let dump: Value = serde_json::from_str(&text).map_err(|_| {
+                err_json("invalid dump json", raw, "srv apps import '<json>|<path>|-'", "srv apps import dump.json")
+            })?;
+            let title = dump
+                .get("app")
+                .and_then(|a| a.get("title"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("Imported app")
+                .to_string();
+            let schema = dump.get("app").and_then(|a| a.get("schema_json")).and_then(|s| s.as_str());
+            let public_reads = dump.get("app").and_then(|a| a.get("public_reads")).and_then(|b| b.as_bool()).unwrap_or(false);
+            let unique = dump.get("app").and_then(|a| a.get("unique_key")).and_then(|u| u.as_str());
+            let board_id = store
+                .create_board(sid, &title, schema, public_reads, unique)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+            let pool = store
+                .board_pool(&board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+            let mut recs: Vec<Value> = Vec::new();
+            if let Some(records) = dump.get("records").and_then(|r| r.as_array()) {
+                for r in records {
+                    if let Some(p) = r.get("payload").and_then(|p| p.as_object()) {
+                        recs.push(Value::Object(p.clone()));
+                    }
+                }
+            }
+            if !recs.is_empty() {
+                pool.srv_record_bulk_insert(&board_id, &recs, None, false)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+            }
+            if let Some(rate) = dump.get("rate") {
+                let _ = pool.srv_rate_set(&board_id, sid, Some(&serde_json::to_string(rate).unwrap_or_default())).await;
+            }
+            if let Some(secs) = dump.get("ttl").and_then(|t| t.get("seconds")).and_then(|s| s.as_i64()) {
+                let field = dump.get("ttl").and_then(|t| t.get("field")).and_then(|f| f.as_str());
+                pool.srv_ttl_set(&board_id, sid, Some(secs), field)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+            }
+            if let Some(a) = dump.get("audit").and_then(|x| x.as_bool()) {
+                pool.srv_app_audit_set(&board_id, sid, a)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+            }
+            if let Some(link) = dump.get("link") {
+                if let (Some(f), Some(p), Some(v)) = (
+                    link.get("from_key").and_then(|x| x.as_str()),
+                    link.get("parent_board").and_then(|x| x.as_str()),
+                    link.get("parent_key").and_then(|x| x.as_str()),
+                ) {
+                    pool.srv_link_set(&board_id, sid, f, p, v)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps import", "srv apps import <json>"))?;
+                }
+            }
+            if let Some(hooks) = dump.get("hooks").and_then(|x| x.as_array()) {
+                for h in hooks {
+                    if let Some(u) = h.get("url").and_then(|x| x.as_str()) {
+                        let _ = pool.srv_hook_register(&board_id, sid, u, None).await;
+                    }
+                }
+            }
+            Ok(json!({ "status": "ok", "board_id": board_id, "records": recs.len() }))
         }
         "keys" => {
             let board_id = args.first().ok_or_else(|| {
@@ -581,6 +742,61 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps audit", "srv apps audit <board_id> on|off"))?;
             Ok(json!({ "status": "ok", "audit_enabled": enabled }))
         }
+        "jobs" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps jobs <board_id> <verb>", "srv apps jobs <board_id> list")
+            })?;
+            let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
+            let rest = &args[2..];
+            match sub {
+                "add" => {
+                    let name = joined_flag(rest, "--name").filter(|n| !n.is_empty()).ok_or_else(|| {
+                        err_json("missing --name <name>", raw, "srv apps jobs <board_id> add --name <n> --schedule <cron> --action <json>", "srv apps jobs <board_id> add --name refresh --schedule '@every 30s' --action '{\"type\":\"http\",\"url\":\"https://api.example.com/x\"}'")
+                    })?;
+                    let schedule = joined_flag(rest, "--schedule").filter(|s| !s.is_empty()).ok_or_else(|| {
+                        err_json("missing --schedule <cron|@every Ns>", raw, "srv apps jobs <board_id> add", "srv apps jobs <board_id> add --schedule '*/5 * * * *'")
+                    })?;
+                    let action = joined_flag(rest, "--action").filter(|a| !a.is_empty()).ok_or_else(|| {
+                        err_json("missing --action '<json>'", raw, "srv apps jobs <board_id> add", "srv apps jobs <board_id> add --action '{\"type\":\"poll\",\"url\":\"https://api.example.com/x\",\"path\":\"$.data\"}'")
+                    })?;
+                    require_board(store, board_id, sid, raw).await?;
+                    let id = store
+                        .system()
+                        .srv_job_add(board_id, &name, &schedule, &action)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs add", "srv apps jobs <board_id> add"))?;
+                    Ok(json!({ "status": "ok", "job_id": id, "schedule": schedule, "next_run_at": None::<String> }))
+                }
+                "list" => {
+                    require_board(store, board_id, sid, raw).await?;
+                    let jobs = store
+                        .system()
+                        .srv_job_list(Some(board_id))
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs list", "srv apps jobs <board_id> list"))?;
+                    Ok(json!({ "status": "ok", "jobs": jobs }))
+                }
+                "remove" => {
+                    let id: i64 = rest
+                        .first()
+                        .and_then(|v| v.parse().ok())
+                        .ok_or_else(|| err_json("missing <job_id>", raw, "srv apps jobs <board_id> remove <job_id>", "srv apps jobs <board_id> remove 3"))?;
+                    require_board(store, board_id, sid, raw).await?;
+                    let removed = store
+                        .system()
+                        .srv_job_remove(id)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs remove", "srv apps jobs <board_id> remove <job_id>"))?;
+                    Ok(json!({ "status": "ok", "removed": removed }))
+                }
+                other => Err(err_json(
+                    &format!("unknown apps jobs verb '{other}'"),
+                    raw,
+                    "srv apps jobs <verb>",
+                    USAGE,
+                )),
+            }
+        }
         other => Err(err_json(
             &format!("unknown apps verb '{other}'"),
             raw,
@@ -664,6 +880,47 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
             Ok(json!({ "status": "ok", "seq": seq }))
+        }
+        "bulk" => {
+            if rest.is_empty() {
+                return Err(err_json(
+                    "missing '<json array>' payload",
+                    raw,
+                    "srv records bulk <board_id> '<json array>' [--writer <id>] [--upsert]",
+                    "srv records bulk <board_id> '[{\"k\":1},{\"k\":2}]'",
+                ));
+            }
+            let json_tokens: Vec<_> = rest
+                .iter()
+                .take_while(|t| !t.starts_with("--"))
+                .map(|v| v.as_str())
+                .collect();
+            let json_str = unquote(&json_tokens.join(" "));
+            let parsed: Value = serde_json::from_str(&json_str).map_err(|_| {
+                err_json(
+                    "invalid JSON payload",
+                    raw,
+                    "srv records bulk <board_id> '<json array>'",
+                    "srv records bulk <board_id> '[{\"k\":1},{\"k\":2}]'",
+                )
+            })?;
+            let records: Vec<Value> = match parsed {
+                Value::Array(a) => a,
+                _ => {
+                    return Err(err_json(
+                        "expected a JSON array of record objects",
+                        raw,
+                        "srv records bulk <board_id> '<json array>'",
+                        "srv records bulk <board_id> '[{\"k\":1},{\"k\":2}]'",
+                    ))
+                }
+            };
+            let writer = joined_flag(rest, "--writer");
+            let seqs = pool
+                .srv_record_bulk_insert(&board_id, &records, writer.as_deref(), has_flag(rest, "--upsert"))
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv records bulk", "srv records bulk <board_id> '<json array>'"))?;
+            Ok(json!({ "status": "ok", "inserted": seqs.len(), "seqs": seqs }))
         }
         "list" => {
             let limit: i64 = val_after(rest, "--limit")
@@ -765,9 +1022,10 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                         .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
                     return Ok(json!({ "status": "ok", "records": records }));
                 }
-                let order = order_from(rest);
+                let order_owned = orders_from(rest);
+                let orders: Vec<(&str, bool)> = order_owned.iter().map(|(p, d)| (p.as_str(), *d)).collect();
                 let records = pool
-                    .srv_record_filter(&board_id, &filter.conds, order.as_ref().map(|(p, d)| (p.as_str(), *d)), limit, offset)
+                    .srv_record_filter(&board_id, &filter.conds, &orders, limit, offset)
                     .await
                     .map_err(|e| err_json(&e.to_string(), raw, "srv records query", "srv records query <board_id> --filter <json>"))?;
                 return Ok(json!({ "status": "ok", "records": records }));
@@ -855,6 +1113,23 @@ let limit: i64 = val_after(rest, "--limit")
             Ok(json!({ "status": "ok", "count": count }))
         }
         "delete" => {
+            if let Some(f) = joined_flag(rest, "--filter") {
+                let parsed: Value = serde_json::from_str(&f).map_err(|_| {
+                    err_json(
+                        "invalid --filter json",
+                        raw,
+                        "srv records delete <board_id> --filter <json>",
+                        "srv records delete <board_id> --filter '{\"$.status\":{\"eq\":\"archived\"}}'",
+                    )
+                })?;
+                let filter = parse_filter(&parsed)
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv records delete --filter", "srv records delete <board_id> --filter <json>"))?;
+                let deleted = pool
+                    .srv_record_delete_filter(&board_id, &filter.conds)
+                    .await
+                    .map_err(|e| err_json(&e.to_string(), raw, "srv records delete --filter", "srv records delete <board_id> --filter <json>"))?;
+                return Ok(json!({ "status": "ok", "deleted": deleted }));
+            }
             let seq: Option<i64> = if has_flag(rest, "--all") {
                 None
             } else if let Some(v) = val_after(rest, "--seq") {
@@ -863,9 +1138,9 @@ let limit: i64 = val_after(rest, "--limit")
                 })?)
             } else {
                 return Err(err_json(
-                    "expected '--seq <n>' or '--all'",
+                    "expected '--seq <n>', '--all' or '--filter <json>'",
                     raw,
-                    "srv records delete <board_id> [--seq N | --all]",
+                    "srv records delete <board_id> [--seq N | --all | --filter <json>]",
                     "srv records delete <board_id> --all",
                 ));
             };
@@ -969,6 +1244,9 @@ async fn cmd_files(store: &SessionStore, dir: &Path, sid: &str, verb: &str, args
             USAGE,
         )),
     }
+}
+pub fn srv_usage() -> &'static str {
+    USAGE
 }
 
 pub async fn execute_srv(

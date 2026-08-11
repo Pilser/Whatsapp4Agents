@@ -240,3 +240,81 @@ a board owned by another session. A session can never reach another session's da
 Dependencies: `jsonschema` (validation; `default-features = false` to avoid its reqwest/rustls
 defaults); multipart is hand-parsed; SQLite/libSQL already present. Keep modules small — one
 concern per file, explicit imports, `cargo check` after edits.
+
+---
+
+## 8. Extended capabilities (implemented)
+
+The engine now covers the full serverless-app surface. Realtime, bulk writes, import/export,
+full admin config over HTTP, CORS, multi-column sorting and scheduled jobs were added on top
+of the §1–§6 base.
+
+### 8.1 Realtime — WS + SSE
+
+- `GET /api/srv/{board_id}/ws?after=N&filter=<json>` — WebSocket; sends a catch-up of records
+  with `seq > N` then streams live `record.created/updated/deleted` events. Works for template
+  boards (`{template}@{version}`) too.
+- `GET /api/srv/{board_id}/events?after=N&filter=<json>` — **Server-Sent Events** (SSE,
+  `text/event-stream`), same payload shape, keep-alive comments included. Both use the shared
+  in-process `Broker` (`crates/ch-web-ui/src/realtime.rs`); record mutations publish one event
+  that both transports fan out.
+
+### 8.2 Bulk writes & delete-by-filter
+
+- CLI `srv records bulk <board_id> '<json array>' [--writer <id>] [--upsert]` and
+  `POST /api/srv/{board_id}/bulk` (`{"records":[...], "upsert": bool}`) insert many records in
+  one call (each validated; first failure aborts). DB: `srv_record_bulk_insert`.
+- CLI `srv records delete <board_id> --filter '<json>'` and `DELETE /api/srv/{board_id}/records?filter=<json>`
+  delete every record matching a filter. DB: `srv_record_delete_filter`.
+
+### 8.3 Export / import
+
+- `srv apps export <board_id> [--out <path>]` dumps the whole board: app config (title, schema,
+  public_reads, unique_key), rate, ttl, audit flag, link, hook URLs, and all record payloads.
+- `srv apps import '<json>|<path>|-'` creates a NEW board from a dump (inline JSON, a file, or
+  `-` for stdin) and restores config + records. Webhook secrets are not recoverable (re-registered
+  without a secret).
+
+### 8.4 Full admin config over HTTP (previously CLI-only)
+
+All admin-plane operations now have HTTP endpoints (admin key / board_id bearer required):
+
+| Resource | Endpoints |
+|---|---|
+| Config summary | `GET /api/srv/{board_id}/config` (app + rate + ttl + audit + link + hooks + keys) |
+| TTL | `PUT /api/srv/{board_id}/ttl` `{"seconds":N,"field":"$.path"}`, `DELETE …/ttl` |
+| Join link | `PUT /api/srv/{board_id}/link` `{"on":"$.k","to":"<parent>","via":"$.k"}`, `DELETE …/link` |
+| Audit | `PUT /api/srv/{board_id}/audit` `{"enabled":bool}` |
+| App meta | `PATCH /api/srv/{board_id}/app` (title / schema / clear_schema / public_reads / unique / clear_unique) |
+| Keys | `GET /api/srv/{board_id}/keys`, `DELETE …/keys?bucket=<b>` (issue remains `POST /keys`) |
+| Hooks | `GET /api/srv/{board_id}/hooks`, `GET …/hooks/deliveries?url=<u>` |
+
+### 8.5 CORS
+
+Every `/api/srv/*` JSON response carries `Access-Control-Allow-Origin: *`, and
+`OPTIONS /api/srv/{board_id}/{*rest}` answers preflight with the allowed methods/headers
+(Authorization, Content-Type, X-Writer). Browser apps can call the API cross-origin.
+
+### 8.6 Multi-column sorting
+
+- CLI: `srv records query <board_id> --filter '<json>' --order '$.a' asc --order '$.b' desc …`
+  (`--order` is repeatable, applied left to right).
+- HTTP: `GET /api/srv/{board_id}/records?filter=…&order=$.a,$.b&dir=desc`.
+- DB: `srv_record_filter` now takes an `orders: &[(&str, bool)]` slice.
+
+### 8.7 Scheduled jobs (cron + "listening" to external APIs)
+
+A global scheduler worker (`crates/ch-web-ui/src/scheduler.rs`, spawned in `src/main.rs`) runs
+every ~15 s, picks up due jobs from the `app_jobs` table (system DB) and reschedules each.
+
+- CLI: `srv apps jobs <board_id> add --name <n> --schedule <cron> --action '<json>' | list | remove <id>`.
+- Schedules: 5-field cron (`*`, `*/n`, `a-b`, `a,b,c` for min hour dom month dow) or an interval
+  `@every <N><s|m|h|d>` (e.g. `@every 30s`).
+- Actions:
+  - `{"type":"http","url":…,"method":"GET","headers":[…],"body":…,"timeout_ms":15000}` — outbound
+    request (SSRF-guarded); response not stored.
+  - `{"type":"poll","url":…,"path":"$.field",…}` — outbound request, extract `path` from the JSON
+    response, insert the resulting object as a NEW record on the board (writer = job name). This is
+    how an app "listens" to an external API on a schedule.
+- DB: `zw-db/src/jobs.rs` — `app_jobs` table, `srv_job_add/list/remove/due/reschedule/mark`,
+  `next_run()` cron/interval solver.

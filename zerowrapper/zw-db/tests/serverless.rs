@@ -11,6 +11,17 @@ async fn pool() -> (zw_db::DbPool, std::path::PathBuf) {
     (pool, dir)
 }
 
+async fn register_board(pool: &zw_db::DbPool, board_id: &str, owner: &str) {
+    use turso::params::Params;
+    let conn = pool.conn().await;
+    conn.execute(
+        "INSERT INTO srv_board_index (board_id, session_id, owner_key) VALUES (?1, 'test-session', ?2)",
+        Params::Positional(vec![turso::Value::from(board_id), turso::Value::from(owner)]),
+    )
+    .await
+    .unwrap();
+}
+
 fn payloads() -> Vec<Value> {
     vec![
         json!({"name": "Dell XPS 13", "brand": "Dell", "price": 1200, "body": "the quick brown fox"}),
@@ -60,7 +71,7 @@ async fn unique_duplicates_upsert_writer() {
 
     // writer filter
     let f = parse_filter(&json!({"writer": {"eq": "bob"}})).unwrap();
-    let rows = pool.srv_record_filter(&board, &f.conds, None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &f.conds, &[], 50, 0).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].writer.as_deref(), Some("bob"));
 
@@ -105,6 +116,7 @@ async fn patch_rejects_wrong_shape_and_missing_record() {
 async fn api_keys_issue_auth_revoke_list() {
     let (pool, dir) = pool().await;
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
+    register_board(&pool, &board, "owner").await;
     assert!(!pool.srv_board_has_keys(&board).await.unwrap(), "fresh board has no keys");
 
     let (bucket, secret) = pool.srv_key_issue(&board, "owner", "writer", Some("alice")).await.unwrap();
@@ -141,6 +153,8 @@ async fn api_key_auth_isolated_between_boards() {
     let (pool, dir) = pool().await;
     let a = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     let b = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
+    register_board(&pool, &a, "owner").await;
+    register_board(&pool, &b, "owner").await;
     let (_bucket, secret) = pool.srv_key_issue(&a, "owner", "reader", None).await.unwrap();
     let key = pool.srv_key_auth(&secret).await.unwrap().expect("secret authenticates");
     assert_eq!(key.board_id, a);
@@ -258,7 +272,7 @@ async fn ttl_app_level_expires() {
         .unwrap();
     }
     pool.srv_ttl_set(&board, "owner", Some(3600), None).await.unwrap();
-    let rows = pool.srv_record_filter(&board, &[], None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &[], &[], 50, 0).await.unwrap();
     assert!(rows.is_empty(), "old record excluded lazily from filter");
 
     let deleted = pool.srv_ttl_sweep().await.unwrap();
@@ -266,7 +280,7 @@ async fn ttl_app_level_expires() {
     assert!(pool.srv_record_get(&board, seq).await.unwrap().is_none(), "sweep physically removed it");
 
     let fresh = pool.srv_record_insert(&board, &json!({"n": 2}), None, false).await.unwrap();
-    let rows = pool.srv_record_filter(&board, &[], None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &[], &[], 50, 0).await.unwrap();
     assert_eq!(rows.len(), 1, "fresh record still readable; seq={fresh}");
 
     std::fs::remove_dir_all(&dir).ok();
@@ -281,12 +295,12 @@ async fn ttl_field_expires() {
     pool.srv_record_insert(&board, &json!({"expires_at": iso_now(3600)}), None, false).await.unwrap();
     pool.srv_record_insert(&board, &json!({"name": "no field"}), None, false).await.unwrap();
 
-    let rows = pool.srv_record_filter(&board, &[], None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &[], &[], 50, 0).await.unwrap();
     assert_eq!(rows.len(), 2, "past timestamp excluded; future and missing kept");
 
     let deleted = pool.srv_ttl_sweep().await.unwrap();
     assert_eq!(deleted, 1, "sweep physically deletes just the past record");
-    let rows = pool.srv_record_filter(&board, &[], None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &[], &[], 50, 0).await.unwrap();
     assert_eq!(rows.len(), 2);
 
     std::fs::remove_dir_all(&dir).ok();
@@ -301,7 +315,7 @@ async fn ttl_both_seconds_and_field_expire() {
     pool.srv_record_insert(&board, &json!({"expires_at": iso_now(-3600), "k": "past-field"}), None, false).await.unwrap();
     pool.srv_record_insert(&board, &json!({"expires_at": iso_now(3600), "k": "future-field"}), None, false).await.unwrap();
 
-    let rows = pool.srv_record_filter(&board, &[], None, 50, 0).await.unwrap();
+    let rows = pool.srv_record_filter(&board, &[], &[], 50, 0).await.unwrap();
     assert_eq!(rows.len(), 1, "fresh record with expired field still excluded when both rules set");
     assert_eq!(rows[0].payload["k"], "future-field");
 
@@ -372,6 +386,7 @@ async fn hook_enqueue_appears_due() {
     let (pool, dir) = pool().await;
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     let url = "https://example.com/hook";
+    register_board(&pool, &board, "owner").await;
     pool.srv_hook_register(&board, "owner", url, None).await.unwrap();
 
     let event = r#"{"board":"x","type":"record.created","seq":1}"#;
@@ -398,6 +413,7 @@ async fn hook_reschedule_deadletter() {
     let (pool, dir) = pool().await;
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     let url = "https://example.com/hook";
+    register_board(&pool, &board, "owner").await;
     pool.srv_hook_register(&board, "owner", url, None).await.unwrap();
     let id = pool.srv_hook_enqueue(&board, url, r#"{"board":"b","type":"record.created","seq":2}"#).await.unwrap();
 

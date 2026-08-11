@@ -50,11 +50,36 @@ CREATE TABLE IF NOT EXISTS srv_board_index (
 );
 CREATE INDEX IF NOT EXISTS idx_srv_board_index_session ON srv_board_index(session_id);
 
+CREATE TABLE IF NOT EXISTS app_jobs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    schedule     TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    next_run_at  TEXT,
+    last_run_at  TEXT,
+    last_status  TEXT,
+    last_message TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_app_jobs_board ON app_jobs(board_id);
+CREATE INDEX IF NOT EXISTS idx_app_jobs_next ON app_jobs(next_run_at);
+
 CREATE TABLE IF NOT EXISTS wb_public_index (
     slug       TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     page_no    INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS templates (
+    template_id     TEXT PRIMARY KEY,
+    name            TEXT NOT NULL DEFAULT '',
+    kind            TEXT NOT NULL DEFAULT 'app',
+    description     TEXT NOT NULL DEFAULT '',
+    current_version INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ";
 

@@ -1,6 +1,8 @@
 pub mod protocol;
 pub mod dispatch;
 pub mod manage_whiteboard;
+pub mod manage_materials;
+pub mod materials_help;
 pub mod srv;
 pub mod srv_help;
 

@@ -18,6 +18,7 @@ pub struct AppContext {
     pub settings: SiteSettings,
     pub landing: LandingData,
     pub whiteboard: Option<zw_whiteboard::WhiteboardHandle>,
+    pub materials: Option<zw_materials::TemplateStore>,
     pub mcp: Option<zw_mcp::dispatch::McpProviders>,
     pub realtime: std::sync::Arc<crate::realtime::Broker>,
 }
@@ -46,6 +47,7 @@ impl AppContext {
             settings,
             landing,
             whiteboard: None,
+            materials: None,
             mcp: None,
             realtime: std::sync::Arc::new(crate::realtime::Broker::new()),
         }
@@ -61,7 +63,16 @@ impl AppContext {
         self
     }
 
+    pub fn with_materials(mut self, store: zw_materials::TemplateStore) -> Self {
+        self.materials = Some(store);
+        self
+    }
+
     pub fn whiteboard(&self) -> Option<&zw_whiteboard::WhiteboardHandle> {
         self.whiteboard.as_ref()
+    }
+
+    pub fn materials(&self) -> Option<&zw_materials::TemplateStore> {
+        self.materials.as_ref()
     }
 }

@@ -450,6 +450,7 @@ dependencies = [
  "zw-cache",
  "zw-core",
  "zw-db",
+ "zw-materials",
  "zw-mcp",
  "zw-whiteboard",
 ]
@@ -4835,6 +4836,7 @@ dependencies = [
  "zw-channels",
  "zw-core",
  "zw-db",
+ "zw-materials",
  "zw-mcp",
  "zw-whiteboard",
 ]
@@ -4903,6 +4905,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "zw-materials"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "zw-db",
+]
+
+[[package]]
 name = "zw-mcp"
 version = "0.1.0"
 dependencies = [
@@ -4914,6 +4929,7 @@ dependencies = [
  "tracing",
  "zw-core",
  "zw-db",
+ "zw-materials",
  "zw-whiteboard",
 ]
 
