@@ -318,3 +318,23 @@ every ~15 s, picks up due jobs from the `app_jobs` table (system DB) and resched
     how an app "listens" to an external API on a schedule.
 - DB: `zw-db/src/jobs.rs` — `app_jobs` table, `srv_job_add/list/remove/due/reschedule/mark`,
   `next_run()` cron/interval solver.
+
+---
+
+## 9. Next: expression engine + recipe engine (new crates)
+
+The next milestone closes the "people write code for this" gaps with **two new crates** —
+no user-code sandbox. Full spec: `docs/serverless-execution-model.md`.
+
+| New crate | What it adds | Status |
+|---|---|---|
+| `zw-expr` | Safe expression/computed-field engine: `$.price * $.qty`, `lower($.name)`, `if(c,a,b)`, date/string funcs. Pure, side-effect-free, non-panicking. Drives computed fields, cross-field `validate`, recipe conditions. | 🔵 planned |
+| `zw-recipe` | Declarative rule engine + secrets: `recipes:[{when, match, actions}]` (compute/copy/upsert-other/notify/call/schedule), secrets map with `${VAR}` substitution, masked on read, `?dry_run`, replay, `dedup_on` idempotency. | 🔵 planned |
+
+Planned surfaces:
+- Config on `wb_apps`: `computed: {…}`, `validate: […], redact: […], states: […], secrets: {…}`,
+  plus a `wb_recipes` table.
+- Runtime: scheduler worker + inbound `POST /api/srv/{board}/events` receiver in `ch-web-ui`
+  feeding recipes; per-run budget/timeout/SSRF-reuse; every run writes an audit row.
+- CLI in `zw-mcp`: `srv apps recipes …`, `srv apps secrets …`, `srv apps compute …`
+  (with `--dry-run`).

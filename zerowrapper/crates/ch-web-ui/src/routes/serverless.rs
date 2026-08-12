@@ -865,7 +865,7 @@ pub async fn srv_file(cx: &Cx) -> Result<Response> {
 
     let mut content_type = "application/octet-stream".to_string();
     let mut filename = file_id.clone();
-    if let Ok(records) = pool.srv_record_query(board_id, "$.file", Some(&file)).await {
+    if let Ok(records) = pool.srv_record_query_raw(board_id, "$.file", Some(&file)).await {
         if let Some(first) = records.first() {
             if let Some(t) = first.payload["type"].as_str() {
                 content_type = t.to_string();
@@ -1173,13 +1173,78 @@ async fn publish_record_event(ctx: &AppContext, board_id: &str, kind: &str, seq:
         Ok(p) => p,
         Err(_) => return,
     };
-    let record = match pool.srv_record_get(board_id, seq).await {
+    let record = match pool.srv_record_get_raw(board_id, seq).await {
         Ok(Some(record)) => Some(record),
         _ => None,
     };
     let event = crate::realtime::record_event(kind, board_id, seq, record.as_ref());
     ctx.realtime.publish(&event);
     enqueue_hook_events(ctx, board_id, &event).await;
+    dispatch_recipes(&pool, board_id, kind, seq, record.as_ref()).await;
+}
+
+async fn dispatch_recipes(
+    pool: &std::sync::Arc<zw_db::DbPool>,
+    board_id: &str,
+    kind: &str,
+    seq: i64,
+    record: Option<&zw_db::serverless::SrvRecord>,
+) {
+    let event_kind = match kind {
+        "created" => zw_recipe::EventKind::Created,
+        "updated" => zw_recipe::EventKind::Updated,
+        "deleted" => zw_recipe::EventKind::Deleted,
+        _ => return,
+    };
+    let recipes = match pool.srv_recipe_list(board_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("dispatch_recipes: list error: {}", e);
+            return;
+        }
+    };
+    let payload = record.map(|r| r.payload.clone()).unwrap_or_else(|| serde_json::json!({}));
+    let writer = record.and_then(|r| r.writer.clone());
+    let mut secrets = zw_recipe::Secrets::new();
+    if let Ok(map) = pool.srv_secrets_map(board_id).await {
+        for (name, value) in map {
+            secrets.insert(&name, &value);
+        }
+    }
+    let engine = zw_recipe::Engine { db: pool };
+    for sr in recipes {
+        let Some(recipe) = to_recipe(&sr) else { continue };
+        if !matches!(recipe.event_kind(), Some(k) if k == event_kind) {
+            continue;
+        }
+        let ctx = zw_recipe::EventContext {
+            kind: event_kind,
+            board_id: board_id.to_string(),
+            seq: Some(seq),
+            payload: payload.clone(),
+            writer: writer.clone(),
+            cron_name: None,
+        };
+        let outcome = engine.run_recipe(&recipe, &secrets, &ctx, false).await;
+        if !outcome.report.logs.is_empty() {
+            tracing::debug!("dispatch_recipes: recipe {} logs: {:?}", recipe.name, outcome.report.logs);
+        }
+    }
+}
+
+fn to_recipe(sr: &zw_db::recipes::SrvRecipe) -> Option<zw_recipe::Recipe> {
+    let actions = match sr.actions_json.as_array() {
+        Some(arr) => arr.clone(),
+        None => return None,
+    };
+    Some(zw_recipe::Recipe {
+        name: sr.name.clone(),
+        when: sr.when_json.clone(),
+        match_json: sr.match_json.clone(),
+        enabled: sr.enabled,
+        dedup_on: sr.dedup_on.clone(),
+        actions,
+    })
 }
 
 async fn enqueue_hook_events(ctx: &AppContext, board_id: &str, event: &str) {
@@ -1221,6 +1286,7 @@ pub async fn srv_record_delete_route(cx: &Cx) -> Result<Response> {
             let event = crate::realtime::record_event("deleted", &board_id, seq, None);
             ctx.realtime.publish(&event);
             enqueue_hook_events(ctx, &board_id, &event).await;
+            dispatch_recipes(&pool, &board_id, "deleted", seq, None).await;
             Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "seq": seq})))
         }
         Ok(false) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
@@ -1332,6 +1398,11 @@ pub async fn srv_config(cx: &Cx) -> Result<Response> {
     let link = pool.srv_link_get(board_id).await;
     let hooks = pool.srv_hook_list(board_id, &owner).await;
     let keys = ctx.db.system().srv_key_list(board_id, &owner).await;
+    let computed = pool.srv_computed_get(board_id).await;
+    let validate = pool.srv_validate_get(board_id).await;
+    let redact = pool.srv_redact_get(board_id).await;
+    let recipes = pool.srv_recipe_list(board_id).await;
+    let secrets = pool.srv_secret_list(board_id).await;
     Ok(json_response(
         StatusCode::OK,
         serde_json::json!({
@@ -1343,6 +1414,11 @@ pub async fn srv_config(cx: &Cx) -> Result<Response> {
             "link": link.unwrap_or(None),
             "hooks": hooks.unwrap_or_default(),
             "keys": keys.unwrap_or_default(),
+            "computed": computed.unwrap_or(None),
+            "validate": validate.unwrap_or(None),
+            "redact": redact.unwrap_or(None),
+            "recipes": recipes.unwrap_or_default(),
+            "secrets": secrets.unwrap_or_default(),
         }),
     ))
 }
@@ -1477,6 +1553,70 @@ pub async fn srv_audit_set_route(cx: &Cx, body: Body) -> Result<Response> {
     }
 }
 
+async fn set_config_kind(ctx: &AppContext, cx: &Cx, body: Body, kind: &str, clear: bool) -> Result<Response> {
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let app = match pool.srv_app_by_id(board_id).await {
+        Ok(Some(app)) => app,
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    };
+    let json = if clear {
+        None
+    } else {
+        let req = match parse_json_body(body, 1_000_000).await {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        };
+        Some(req.to_string())
+    };
+    let res = match kind {
+        "computed" => pool.srv_app_set_computed(board_id, &app.owner_key, json.as_deref()).await,
+        "validate" => pool.srv_app_set_validate(board_id, &app.owner_key, json.as_deref()).await,
+        "redact" => pool.srv_app_set_redact(board_id, &app.owner_key, json.as_deref()).await,
+        _ => unreachable!(),
+    };
+    match res {
+        Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "kind": kind}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(PUT "/api/srv/{board_id}/computed")]
+pub async fn srv_computed_set_route(cx: &Cx, body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, body, "computed", false).await
+}
+
+#[route(DELETE "/api/srv/{board_id}/computed")]
+pub async fn srv_computed_clear_route(cx: &Cx, _body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, Body::empty(), "computed", true).await
+}
+
+#[route(PUT "/api/srv/{board_id}/validate")]
+pub async fn srv_validate_set_route(cx: &Cx, body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, body, "validate", false).await
+}
+
+#[route(DELETE "/api/srv/{board_id}/validate")]
+pub async fn srv_validate_clear_route(cx: &Cx, _body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, Body::empty(), "validate", true).await
+}
+
+#[route(PUT "/api/srv/{board_id}/redact")]
+pub async fn srv_redact_set_route(cx: &Cx, body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, body, "redact", false).await
+}
+
+#[route(DELETE "/api/srv/{board_id}/redact")]
+pub async fn srv_redact_clear_route(cx: &Cx, _body: Body) -> Result<Response> {
+    set_config_kind(app_context(cx), cx, Body::empty(), "redact", true).await
+}
+
 #[route(PATCH "/api/srv/{board_id}/app")]
 pub async fn srv_app_patch(cx: &Cx, body: Body) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
@@ -1599,6 +1739,173 @@ pub async fn srv_hooks_deliveries(cx: &Cx) -> Result<Response> {
     match ctx.db.system().srv_hook_deliveries(board_id, &owner, url.as_deref()).await {
         Ok(rows) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "deliveries": rows}))),
         Err(e) => Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(GET "/api/srv/{board_id}/recipes")]
+pub async fn srv_recipes_list(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    match pool.srv_recipe_list(board_id).await {
+        Ok(recipes) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "recipes": recipes}))),
+        Err(e) => Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(POST "/api/srv/{board_id}/recipes")]
+pub async fn srv_recipes_add(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let req = match parse_json_body(body, 1_000_000).await {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+    let name = match req.get("name").and_then(|n| n.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing name"}))),
+    };
+    let when = match req.get("when").and_then(|w| w.as_str()) {
+        Some(w) if !w.is_empty() => w.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing when"}))),
+    };
+    let match_json = req.get("match").map(|m| m.to_string());
+    let dedup = req.get("dedup_on").and_then(|d| d.as_str()).map(str::to_string);
+    let enabled = req.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+    let actions = match req.get("actions") {
+        Some(a) if a.is_array() => a.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "actions must be a json array"}))),
+    };
+    match pool
+        .srv_recipe_add(board_id, &name, &when, match_json.as_deref(), enabled, dedup.as_deref(), &actions)
+        .await
+    {
+        Ok(id) => Ok(json_response(StatusCode::CREATED, serde_json::json!({"ok": true, "recipe_id": id}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(PATCH "/api/srv/{board_id}/recipes/{name}")]
+pub async fn srv_recipes_set_enabled(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let name = path_param::<BoardId>(cx);
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let req = match parse_json_body(body, 1_000_000).await {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+    let enabled = match req.get("enabled").and_then(|e| e.as_bool()) {
+        Some(e) => e,
+        None => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "expected boolean enabled field"}))),
+    };
+    match pool.srv_recipe_set_enabled(board_id, name, enabled).await {
+        Ok(true) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "enabled": enabled}))),
+        Ok(false) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "recipe not found"}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(DELETE "/api/srv/{board_id}/recipes/{name}")]
+pub async fn srv_recipes_remove(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let name = path_param::<BoardId>(cx);
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    match pool.srv_recipe_remove(board_id, name).await {
+        Ok(true) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true}))),
+        Ok(false) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "recipe not found"}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(GET "/api/srv/{board_id}/secrets")]
+pub async fn srv_secrets_list(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    match pool.srv_secret_list(board_id).await {
+        Ok(secrets) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "secrets": secrets}))),
+        Err(e) => Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(POST "/api/srv/{board_id}/secrets")]
+pub async fn srv_secrets_set(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let req = match parse_json_body(body, 1_000_000).await {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+    let name = match req.get("name").and_then(|n| n.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing name"}))),
+    };
+    let value = match req.get("value").and_then(|v| v.as_str()) {
+        Some(v) if !v.is_empty() => v.to_string(),
+        _ => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing value"}))),
+    };
+    match pool.srv_secret_set(board_id, &name, &value).await {
+        Ok(()) => Ok(json_response(StatusCode::CREATED, serde_json::json!({"ok": true, "set": name.to_uppercase()}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(DELETE "/api/srv/{board_id}/secrets/{name}")]
+pub async fn srv_secrets_remove(cx: &Cx) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let name = path_param::<BoardId>(cx);
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    match pool.srv_secret_remove(board_id, name).await {
+        Ok(true) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true}))),
+        Ok(false) => Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "secret not found"}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
     }
 }
 

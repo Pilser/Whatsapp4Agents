@@ -196,6 +196,13 @@ impl DbPool {
                 }
             }
         }
+        if !parents.is_empty() {
+            if let Some(redact) = self.srv_redact_get(&link.parent_board).await? {
+                for p in parents.values_mut() {
+                    crate::logic::apply_redact(&redact, p);
+                }
+            }
+        }
         let mut out = Vec::new();
         for rec in records {
             let joined = json_str(&rec.payload, &link.from_key).and_then(|k| parents.get(&k).cloned());

@@ -23,7 +23,7 @@ impl crate::TemplateStore {
                 Ok(json!({ "version": ver, "schema": app.and_then(|a| a.schema_json) }))
             }
             "records" => {
-                let records = pool.srv_record_list(&vsid, limit, None, offset).await?;
+                let records = pool.srv_record_list_raw(&vsid, limit, None, offset).await?;
                 Ok(serde_json::to_value(records)?)
             }
             "count" => Ok(json!({ "version": ver, "records": pool.srv_record_count(&vsid).await? })),

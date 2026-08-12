@@ -15,6 +15,16 @@ pub fn verb_help(group: &str, verb: &str) -> Option<&'static str> {
         ("apps", "link") => Some(APPS_LINK),
         ("apps", "audit") => Some(APPS_AUDIT),
         ("apps", "jobs") => Some(APPS_JOBS),
+        ("apps", "computed") => Some(APPS_COMPUTED),
+        ("apps", "validate") => Some(APPS_VALIDATE),
+        ("apps", "redact") => Some(APPS_REDACT),
+        ("recipes", "list") => Some(RECIPES_LIST),
+        ("recipes", "add") => Some(RECIPES_ADD),
+        ("recipes", "enable") => Some(RECIPES_ENABLE),
+        ("recipes", "remove") => Some(RECIPES_REMOVE),
+        ("secrets", "set") => Some(SECRETS_SET),
+        ("secrets", "list") => Some(SECRETS_LIST),
+        ("secrets", "remove") => Some(SECRETS_REMOVE),
         ("records", "submit") => Some(RECORDS_SUBMIT),
         ("records", "bulk") => Some(RECORDS_BULK),
         ("records", "list") => Some(RECORDS_LIST),
@@ -305,3 +315,82 @@ srv files get <board_id> <file_id> --out <path>\n\
 \n\
 downloads an uploaded file to a local path (creates parent dirs).\n\
 example: srv files get <board_id> files/f_abc123.bin --out /tmp/photo.png\n";
+
+const APPS_COMPUTED: &str = "\
+srv apps computed <board_id> '<json>' | --clear | (no args shows current)\n\
+\n\
+sets the computed-fields config: a map of output field -> expression evaluated on every record write.\n\
+\n\
+  with a json argument: replace the config\n\
+  --clear: remove the config\n\
+  no args: print the current config\n\
+example: srv apps computed <board_id> '{\"total\":\"$.price * $.qty\"}'\n\
+expressions use the same language as filters/paths ($.price, string ops, math).\n";
+
+const APPS_VALIDATE: &str = "\
+srv apps validate <board_id> '<json>' | --clear | (no args shows current)\n\
+\n\
+sets validation rules evaluated on every record write: an array of {\"when\":\"expr\",\"error\":\"msg\"}.\n\
+The first rule whose expression is truthy rejects the write with its error message.\n\
+\n\
+  with a json argument: replace the rules\n\
+  --clear: remove the rules\n\
+  no args: print the current rules\n\
+example: srv apps validate <board_id> '[{\"when\":\"$.total > 1000\",\"error\":\"order too large\"}]'\n";
+
+const APPS_REDACT: &str = "\
+srv apps redact <board_id> '<json>' | --clear | (no args shows current)\n\
+\n\
+sets redact paths: an array of JSONPaths whose values are masked as \"***\" in record payloads.\n\
+Applied when records are returned from reads.\n\
+\n\
+  with a json argument: replace the paths\n\
+  --clear: remove the paths\n\
+  no args: print the current paths\n\
+example: srv apps redact <board_id> '[\"$.ssn\",\"$.card.number\"]'\n";
+
+const RECIPES_LIST: &str = "\
+srv recipes list <board_id>\n\
+\n\
+lists the board's recipes (id, name, when, match, enabled, dedup, actions).\n";
+
+const RECIPES_ADD: &str = "\
+srv recipes add <board_id> --name <n> --when '<event>' [--match '<json>'] [--dedup '<$.path>'] [--actions '<json>']\n\
+\n\
+creates an event-driven recipe on the board.\n\
+\n\
+  --name <n>           unique recipe name\n\
+  --when <event>       record.created | record.updated | record.deleted | inbound | cron:<job_name>\n\
+  --match '<json>'     optional filter the event payload must pass (same ops as query)\n\
+  --dedup '<$.path>'   optional JSONPath whose value dedupes runs (already-processed keys are skipped)\n\
+  --actions '<json>'   optional array of action objects, e.g. [{\"$set\":{\"status\":\"paid\"}}]\n\
+example: srv recipes add <board_id> --name on_payment --when record.created --match '{\"$.status\":{\"eq\":\"paid\"}}' --dedup '$.id' --actions '[{\"$set\":{\"approved\":true}}]'\n";
+
+const RECIPES_ENABLE: &str = "\
+srv recipes enable <board_id> <name> on|off\n\
+\n\
+enables or disables a recipe by name.\n\
+example: srv recipes enable <board_id> on_payment off\n";
+
+const RECIPES_REMOVE: &str = "\
+srv recipes remove <board_id> <name>\n\
+\n\
+permanently deletes a recipe by name.\n";
+
+const SECRETS_SET: &str = "\
+srv secrets set <board_id> <NAME> <value>\n\
+\n\
+stores an encrypted secret (API key/token) for the board. The name is stored uppercased;\n\
+the value is AES-GCM encrypted at rest and never returned by list. Stored secrets are only\n\
+decrypted in-memory when a recipe engine runs.\n\
+example: srv secrets set <board_id> STRIPE sk_test_xyz\n";
+
+const SECRETS_LIST: &str = "\
+srv secrets list <board_id>\n\
+\n\
+lists secret names, fingerprints and creation time. Values are never shown.\n";
+
+const SECRETS_REMOVE: &str = "\
+srv secrets remove <board_id> <NAME>\n\
+\n\
+deletes a stored secret by its (uppercased) name.\n";

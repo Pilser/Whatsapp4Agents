@@ -65,7 +65,7 @@ pub async fn snapshot_board(
 
     let mut records = 0i64;
     loop {
-        let batch = src.srv_record_list(src_board, 500, None, records).await?;
+        let batch = src.srv_record_list_raw(src_board, 500, None, records).await?;
         let n = batch.len();
         for r in &batch {
             dst.srv_record_insert(dst_board, &r.payload, r.writer.as_deref(), false)

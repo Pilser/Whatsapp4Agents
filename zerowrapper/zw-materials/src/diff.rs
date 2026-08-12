@@ -138,7 +138,7 @@ async fn seq_set(pool: &DbPool, board: &str) -> Result<BTreeSet<i64>> {
     let mut set = BTreeSet::new();
     let mut offset = 0i64;
     loop {
-        let batch = pool.srv_record_list(board, 2000, None, offset).await?;
+        let batch = pool.srv_record_list_raw(board, 2000, None, offset).await?;
         let n = batch.len();
         for r in &batch {
             set.insert(r.seq);

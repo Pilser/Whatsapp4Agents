@@ -423,6 +423,7 @@ impl DbPool {
         while let Some(record) = crate::serverless::read_record(&mut rows).await? {
             out.push(record);
         }
+        self.srv_record_redact(board_id, &mut out).await?;
         Ok(out)
     }
 
@@ -461,6 +462,7 @@ impl DbPool {
         while let Some(record) = crate::serverless::read_record_scored(&mut rows).await? {
             out.push(record);
         }
+        self.srv_record_redact(board_id, &mut out).await?;
         if snippet && !query.is_empty() {
             for record in &mut out {
                 let text = serde_json::to_string(&record.payload).unwrap_or_default();

@@ -187,11 +187,67 @@ be written directly via submit, only via the audit stream.
 
 ---
 
+## 7. Safe expression / computed-field engine (new crate `zw-expr`)
+
+**Scenario:** users reach for code because they need derived fields, small math,
+string/date formatting, or cross-field checks — none of which a JSON schema alone
+can express.
+
+**What:**
+- Config on the app: `computed: { total: "$.price * $.qty", label: "lower(trim($.name))" }`,
+  evaluated on read (optionally materialized on write) and usable in
+  filter/sort/search/aggregate.
+- `validate: [{ when: "<expr>", error: "msg" }]` layered over JSON-schema.
+- Grammar: literals, `$.json.path` refs, `+ - * / %`, comparisons, `&& || !`,
+  ternary `c?a:b`, and built-ins `lower/upper/trim/len/round/floor/ceil/abs/
+  min/max/concat/contains/startsWith/endsWith/if/coalesce/daysAgo/nowUnix`.
+
+**Guarantees (why this needs no sandbox):**
+- `zw-expr` is a leaf crate (no DB, no I/O), pure, side-effect-free, non-panicking
+  on hostile input; recursion depth and container sizes are capped (polynomial,
+  bounded time).
+- Expressions are *data*, never executed user code.
+
+**Acceptance:** a computed `total` derives from `price*qty` at read time; a
+`validate` rule rejects a negative qty with a custom message; hostile input to
+the evaluator returns an `ExprError` and never panics.
+
+---
+
+## 8. Recipe / rule engine + secrets (new crate `zw-recipe`)
+
+**Scenario:** app owners want *automation* — on an event, transform the record,
+write a row into another board, notify a service, or enqueue a deferred job — plus
+credentials (webhook tokens, API keys) held server-side.
+
+**What:**
+- `recipes:[{ when: "record.created|updated|deleted|inbound|cron:<name>",
+  match:<filter>, name, enabled, dedup_on, actions:[...] }]` stored per board
+  (`wb_recipes` table).
+- Actions: `$compute` (expr fields), `$copy/$move/$format/$merge`,
+  `$push/$pull/$sort/$slice`, `$upsert_other` (write into another board),
+  `$notify` (webhook/SSE), `$call` (SSRF-guarded outbound), `$schedule`
+  (deferred job reusing `app_jobs`), `$set_state`, `$log`.
+- Secrets map on the app config: `secrets:{NAME:value}`; masked on read
+  (`{"set":true}`), hashed at rest, `${NAME}` substitution in hook/call/job
+  headers/body/url. Rotation via `srv apps secrets set/get/remove`.
+- Runtime: per-run budget + per-action timeout, every outbound call reuses the
+  SSRF guard, each run writes an audit row; `?dry_run=true` reports would-be
+  changes without applying; replay re-runs a past event id.
+
+**Acceptance:** a `record.created` with `status=paid` computes a total, upserts a
+row into a summary board, and POSTs a signed notification with a server-held
+secret — all declaratively; dry-run makes no writes; a `dedup_on` key prevents
+double effects on replay.
+
+---
+
 ## Suggested delivery sequence
 1. **Keys/auth** (unlocks everything else).
 2. **Rate limiting** (public boards stop being abusable).
 3. **Realtime** (highest user-visible value for whiteboard embedded apps).
 4. **Webhooks**, then **TTL**, then **joins**, then **audit**.
+5. **Expression engine** (`zw-expr`), then **recipe engine + secrets** (`zw-recipe`).
 
 Each is independent of the others and can be developed/tested/deployed as a
 feature branch with the same test/deploy loop used for the store features.

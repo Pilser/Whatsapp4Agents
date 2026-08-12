@@ -14,6 +14,12 @@ pub struct SrvApp {
     pub schema_json: Option<String>,
     pub public_reads: bool,
     pub unique_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computed_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validate_json: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redact_json: Option<String>,
     pub record_count: i64,
     pub created_at: String,
 }
@@ -61,15 +67,27 @@ async fn read_app(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApp>> {
             Value::Text(s) => Some(s),
             _ => None,
         };
-        let record_count = match row.get_value(6)? {
+        let computed_json = match row.get_value(6)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        let validate_json = match row.get_value(7)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        let redact_json = match row.get_value(8)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        let record_count = match row.get_value(9)? {
             Value::Integer(i) => i,
             _ => 0,
         };
-        let created_at = match row.get_value(7)? {
+        let created_at = match row.get_value(10)? {
             Value::Text(s) => s,
             _ => return Err(anyhow::anyhow!("invalid created_at")),
         };
-        Ok(Some(SrvApp { board_id, owner_key, title, schema_json, public_reads, unique_key, record_count, created_at }))
+        Ok(Some(SrvApp { board_id, owner_key, title, schema_json, public_reads, unique_key, computed_json, validate_json, redact_json, record_count, created_at }))
     } else {
         Ok(None)
     }
@@ -186,7 +204,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, computed_json, validate_json, redact_json, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE board_id = ?1",
@@ -204,7 +222,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, computed_json, validate_json, redact_json, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE board_id = ?1 AND owner_key = ?2",
@@ -218,7 +236,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, \
+                "SELECT owner_key, board_id, title, schema_json, public_reads, unique_key, computed_json, validate_json, redact_json, \
                     (SELECT COUNT(*) FROM wb_records WHERE board_id = wb_apps.board_id), \
                     created_at \
                  FROM wb_apps WHERE owner_key = ?1 ORDER BY created_at",
@@ -362,12 +380,33 @@ impl DbPool {
         }
     }
 
+    /// Apply computed fields + custom validate rules, then JSON-schema validate.
+    /// Returns the prepared payload (computed fields materialized) ready to store.
+    pub async fn prepare_payload(&self, app: &SrvApp, payload: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+        let mut prepared = payload.clone();
+        if let Some(c) = app.computed_json.as_deref() {
+            let computed: serde_json::Value = serde_json::from_str(c)
+                .map_err(|e| anyhow::anyhow!("board {} has invalid computed_json: {e}", app.board_id))?;
+            crate::logic::apply_computed(&computed, &mut prepared)?;
+        }
+        if let Some(v) = app.validate_json.as_deref() {
+            let rules: serde_json::Value = serde_json::from_str(v)
+                .map_err(|e| anyhow::anyhow!("board {} has invalid validate_json: {e}", app.board_id))?;
+            if let Some(msg) = crate::logic::validate_rules(&rules, &prepared)? {
+                anyhow::bail!("{msg}");
+            }
+        }
+        self.srv_validate(&app.board_id, &prepared).await?;
+        Ok(prepared)
+    }
+
     pub async fn srv_record_insert(&self, board_id: &str, payload: &serde_json::Value, writer: Option<&str>, upsert: bool) -> anyhow::Result<i64> {
         let app = self
             .srv_app_by_id(board_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
-        self.srv_validate(board_id, payload).await?;
+        let prepared = self.prepare_payload(&app, payload).await?;
+        let payload = &prepared;
         let unique_val = match app.unique_key.as_deref() {
             Some(key) => self.unique_from_payload(board_id, key, payload).await?,
             None => None,
@@ -438,11 +477,12 @@ impl DbPool {
 
     /// Replace an existing record's payload (identity and created_at preserved).
     pub async fn srv_record_set(&self, board_id: &str, seq: i64, payload: &serde_json::Value, writer: Option<&str>) -> anyhow::Result<()> {
-        self.srv_validate(board_id, payload).await?;
         let app = self
             .srv_app_by_id(board_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("board {board_id} does not exist"))?;
+        let prepared = self.prepare_payload(&app, payload).await?;
+        let payload = &prepared;
         if let Some(key) = app.unique_key.as_deref() {
             if let Some(value) = self.unique_from_payload(board_id, key, payload).await? {
                 if let Some(existing) = self.unique_holder(board_id, key, &value, Some(seq)).await? {
@@ -467,7 +507,7 @@ impl DbPool {
         Ok(())
     }
 
-    async fn srv_record_get_raw(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
+    pub async fn srv_record_get_raw(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
@@ -476,6 +516,27 @@ impl DbPool {
             )
             .await?;
         read_record(&mut rows).await
+    }
+
+    /// Mask `redact` paths in a single record's payload (no-op when the board has none).
+    pub(crate) async fn srv_record_redact_one(&self, board_id: &str, record: &mut SrvRecord) -> anyhow::Result<()> {
+        if let Some(redact) = self.srv_redact_get(board_id).await? {
+            crate::logic::apply_redact(&redact, &mut record.payload);
+        }
+        Ok(())
+    }
+
+    /// Mask `redact` paths in every record's payload (no-op when the board has none).
+    pub(crate) async fn srv_record_redact(&self, board_id: &str, records: &mut [SrvRecord]) -> anyhow::Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        if let Some(redact) = self.srv_redact_get(board_id).await? {
+            for r in records.iter_mut() {
+                crate::logic::apply_redact(&redact, &mut r.payload);
+            }
+        }
+        Ok(())
     }
 
     /// Apply a patch (subset of MongoDB-style ops) to an existing record's payload.
@@ -530,10 +591,17 @@ impl DbPool {
     }
 
     pub async fn srv_record_get(&self, board_id: &str, seq: i64) -> anyhow::Result<Option<SrvRecord>> {
-        self.srv_record_get_raw(board_id, seq).await
+        let mut record = match self.srv_record_get_raw(board_id, seq).await? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        self.srv_record_redact_one(board_id, &mut record).await?;
+        Ok(Some(record))
     }
 
-    pub async fn srv_record_list(&self, board_id: &str, limit: i64, before: Option<i64>, offset: i64) -> anyhow::Result<Vec<SrvRecord>> {
+    /// Unmasked variant of `srv_record_list`, for internal consumers that must
+    /// copy or process records without `redact` masking.
+    pub async fn srv_record_list_raw(&self, board_id: &str, limit: i64, before: Option<i64>, offset: i64) -> anyhow::Result<Vec<SrvRecord>> {
         let limit = limit.clamp(1, 200);
         let offset = offset.max(0);
         let mut params = vec![Value::from(board_id)];
@@ -576,6 +644,12 @@ impl DbPool {
         Ok(out)
     }
 
+    pub async fn srv_record_list(&self, board_id: &str, limit: i64, before: Option<i64>, offset: i64) -> anyhow::Result<Vec<SrvRecord>> {
+        let mut out = self.srv_record_list_raw(board_id, limit, before, offset).await?;
+        self.srv_record_redact(board_id, &mut out).await?;
+        Ok(out)
+    }
+
     pub async fn srv_record_count(&self, board_id: &str) -> anyhow::Result<i64> {
         let mut params = vec![Value::from(board_id)];
         let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
@@ -597,6 +671,14 @@ impl DbPool {
     }
 
     pub async fn srv_record_query(&self, board_id: &str, json_path: &str, eq: Option<&str>) -> anyhow::Result<Vec<SrvRecord>> {
+        let mut out = self.srv_record_query_raw(board_id, json_path, eq).await?;
+        self.srv_record_redact(board_id, &mut out).await?;
+        Ok(out)
+    }
+
+    /// Unmasked variant of `srv_record_query`, for internal consumers that look up
+    /// records (e.g. file metadata) without `redact` masking.
+    pub async fn srv_record_query_raw(&self, board_id: &str, json_path: &str, eq: Option<&str>) -> anyhow::Result<Vec<SrvRecord>> {
         let mut params = vec![Value::from(board_id)];
         let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
             Some(ttl_frag) => format!("NOT ({ttl_frag}) AND board_id = ?1"),

@@ -162,6 +162,39 @@ CREATE TABLE IF NOT EXISTS wb_audit (
     ts           TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_wb_audit_board ON wb_audit(board_id, id);
+
+CREATE TABLE IF NOT EXISTS wb_recipes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    when_json    TEXT NOT NULL,
+    match_json   TEXT,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    dedup_on     TEXT,
+    actions_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (board_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_wb_recipes_board ON wb_recipes(board_id);
+CREATE INDEX IF NOT EXISTS idx_wb_recipes_when ON wb_recipes(when_json);
+
+CREATE TABLE IF NOT EXISTS wb_recipe_runs (
+    board_id     TEXT NOT NULL,
+    recipe       TEXT NOT NULL,
+    dedup_key    TEXT NOT NULL,
+    ran_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (board_id, recipe, dedup_key)
+);
+
+CREATE TABLE IF NOT EXISTS wb_app_secrets (
+    board_id   TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    cipher     TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (board_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_wb_app_secrets_board ON wb_app_secrets(board_id);
 ";
 
 pub const SYSTEM_MIGRATIONS: &[&str] = &[
@@ -179,4 +212,7 @@ pub const SESSION_MIGRATIONS: &[&str] = &[
     "ALTER TABLE wb_apps ADD COLUMN ttl_seconds INTEGER;",
     "ALTER TABLE wb_apps ADD COLUMN ttl_field TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN audit INTEGER NOT NULL DEFAULT 0;",
+    "ALTER TABLE wb_apps ADD COLUMN computed_json TEXT;",
+    "ALTER TABLE wb_apps ADD COLUMN validate_json TEXT;",
+    "ALTER TABLE wb_apps ADD COLUMN redact_json TEXT;",
 ];

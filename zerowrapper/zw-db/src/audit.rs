@@ -34,6 +34,13 @@ pub fn audit_hash(payload: &serde_json::Value) -> String {
     hex(&h.finalize())
 }
 
+/// SHA-256 hex of an arbitrary string (used for secret fingerprints and dedup keys).
+pub fn audit_hash_str(s: &str) -> String {
+    let mut h = sha2::Sha256::new();
+    h.update(s.as_bytes());
+    hex(&h.finalize())
+}
+
 impl DbPool {
     pub async fn srv_app_audit_set(&self, board_id: &str, owner: &str, on: bool) -> anyhow::Result<()> {
         let conn = self.conn().await;

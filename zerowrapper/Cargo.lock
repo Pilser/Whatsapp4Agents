@@ -452,6 +452,7 @@ dependencies = [
  "zw-db",
  "zw-materials",
  "zw-mcp",
+ "zw-recipe",
  "zw-whiteboard",
 ]
 
@@ -4836,8 +4837,10 @@ dependencies = [
  "zw-channels",
  "zw-core",
  "zw-db",
+ "zw-expr",
  "zw-materials",
  "zw-mcp",
+ "zw-recipe",
  "zw-whiteboard",
 ]
 
@@ -4889,10 +4892,13 @@ dependencies = [
 name = "zw-db"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
  "anyhow",
+ "base64 0.22.1",
  "bcrypt",
  "chrono",
  "jsonschema",
+ "rand 0.8.6",
  "reqwest",
  "serde",
  "serde_json",
@@ -4902,6 +4908,17 @@ dependencies = [
  "turso",
  "uuid",
  "zw-core",
+ "zw-expr",
+]
+
+[[package]]
+name = "zw-expr"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4931,6 +4948,23 @@ dependencies = [
  "zw-db",
  "zw-materials",
  "zw-whiteboard",
+]
+
+[[package]]
+name = "zw-recipe"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "zw-core",
+ "zw-db",
+ "zw-expr",
 ]
 
 [[package]]

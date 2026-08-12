@@ -11,6 +11,8 @@ const USAGE: &str =
      groups:\n\
        apps      manage the app/board itself (create, schema, keys, hooks, rate, ttl, link, audit, jobs, export/import)\n\
        records   read/write/search/aggregate the records, call external APIs\n\
+       recipes   event-driven automation (record.created/updated/deleted, inbound, cron)\n\
+       secrets   store encrypted API keys/tokens for a board\n\
        files     list/download uploaded files\n\
      \n\
      apps:\n\
@@ -51,7 +53,22 @@ const USAGE: &str =
      jobs action type poll: {\"type\":\"poll\",\"url\":...,\"path\":\"$.field\",...} inserts the extracted object as a new record.\n\
      files:\n\
        srv files list <board_id>\n\
-       srv files get <board_id> <file_id> --out <path>";
+       srv files get <board_id> <file_id> --out <path>\n\
+     recipes:\n\
+       srv recipes list <board_id>\n\
+       srv recipes add <board_id> --name <n> --when '<event>' [--match '<json>'] [--dedup '<$.path>'] [--actions '<json>']\n\
+       srv recipes enable <board_id> <name> on|off\n\
+       srv recipes remove <board_id> <name>\n\
+     secrets:\n\
+       srv secrets set <board_id> <NAME> <value>\n\
+       srv secrets list <board_id>\n\
+       srv secrets remove <board_id> <NAME>\n\
+     apps config verbs:\n\
+       srv apps computed <board_id> '<json>' | --clear | (show)\n\
+       srv apps validate <board_id> '<json>' | --clear | (show)\n\
+       srv apps redact <board_id> '<json>' | --clear | (show)\n\
+     recipe events: record.created, record.updated, record.deleted, inbound, cron:<job_name>\n\
+     recipe actions json (array): [{\"$set\":{\"status\":\"paid\"}}, {\"$call\":{\"url\":\"https://...\",\"method\":\"POST\"}}]";
 
 type CmdResult = Result<Value, Value>;
 
@@ -104,6 +121,22 @@ const FILES_USAGE: &str =
     "srv files <verb> [args]\n\
      list <board_id>\n\
      get <board_id> <file_id> --out <path>\n";
+
+const RECIPES_USAGE: &str =
+    "srv recipes <verb> [args]\n\
+     list <board_id>\n\
+     add <board_id> --name <n> --when '<event>' [--match '<json>'] [--dedup '<$.path>'] [--actions '<json>']\n\
+     enable <board_id> <name> on|off\n\
+     remove <board_id> <name>\n\
+     events: record.created, record.updated, record.deleted, inbound, cron:<job_name>\n\
+     actions json is an array of action objects, e.g. [{\"$set\":{\"status\":\"paid\"}}]\n";
+
+const SECRETS_USAGE: &str =
+    "srv secrets <verb> [args]\n\
+     set <board_id> <NAME> <value>\n\
+     list <board_id>\n\
+     remove <board_id> <NAME>\n\
+     names are stored uppercased; values are encrypted at rest and never listed back.\n";
 
 fn err_json(error: &str, command: &str, usage: &str, hint: &str) -> Value {
     json!({
@@ -226,6 +259,53 @@ async fn require_board(store: &SessionStore, board_id: &str, sid: &str, raw: &st
             )
         })?;
     Ok((app, pool))
+}
+
+/// Shared handler for `srv apps computed|validate|redact <board_id> [json|--clear]`.
+/// With a JSON argument it sets the config; with --clear it removes it;
+/// with neither it prints the current config.
+async fn config_verb(store: &SessionStore, args: &[&String], sid: &str, raw: &str, kind: &str) -> CmdResult {
+    let board_id = args.first().ok_or_else(|| {
+        err_json(
+            &format!("missing <board_id> for srv apps {kind}"),
+            raw,
+            &format!("srv apps {kind} <board_id> '<json>'"),
+            &format!("srv apps {kind} <board_id> '{{\"total\":\"$.price * $.qty\"}}'"),
+        )
+    })?;
+    let (app, pool) = require_board(store, board_id, sid, raw).await?;
+    let rest = &args[1..];
+    if has_flag(rest, "--clear") {
+        let set = match kind {
+            "computed" => pool.srv_app_set_computed(board_id, &app.owner_key, None).await,
+            "validate" => pool.srv_app_set_validate(board_id, &app.owner_key, None).await,
+            "redact" => pool.srv_app_set_redact(board_id, &app.owner_key, None).await,
+            _ => unreachable!(),
+        };
+        set.map_err(|e| err_json(&e.to_string(), raw, &format!("srv apps {kind} --clear"), &format!("srv apps {kind} <board_id> --clear")))?;
+        return Ok(json!({ "status": "ok", "clear": true }));
+    }
+    if let Some(first) = rest.first().filter(|t| !t.starts_with("--")) {
+        let raw_json = unquote(first);
+        let parsed: Value = serde_json::from_str(&raw_json)
+            .map_err(|e| err_json(&format!("invalid json for srv apps {kind}: {e}"), raw, &format!("srv apps {kind} <board_id> '<json>'"), &format!("srv apps {kind} <board_id> '{{\"total\":\"$.price * $.qty\"}}'")))?;
+        let set = match kind {
+            "computed" => pool.srv_app_set_computed(board_id, &app.owner_key, Some(&raw_json)).await,
+            "validate" => pool.srv_app_set_validate(board_id, &app.owner_key, Some(&raw_json)).await,
+            "redact" => pool.srv_app_set_redact(board_id, &app.owner_key, Some(&raw_json)).await,
+            _ => unreachable!(),
+        };
+        set.map_err(|e| err_json(&e.to_string(), raw, &format!("srv apps {kind}"), &format!("srv apps {kind} <board_id> '<json>'")))?;
+        return Ok(json!({ "status": "ok", "kind": kind, "set": parsed }));
+    }
+    let cur = match kind {
+        "computed" => pool.srv_computed_get(board_id).await,
+        "validate" => pool.srv_validate_get(board_id).await,
+        "redact" => pool.srv_redact_get(board_id).await,
+        _ => unreachable!(),
+    }
+    .map_err(|e| err_json(&e.to_string(), raw, &format!("srv apps {kind}"), &format!("srv apps {kind} <board_id>")))?;
+    Ok(json!({ "status": "ok", "kind": kind, "config": cur }))
 }
 
 async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
@@ -797,6 +877,9 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                 )),
             }
         }
+        "computed" => config_verb(store, args, sid, raw, "computed").await,
+        "validate" => config_verb(store, args, sid, raw, "validate").await,
+        "redact" => config_verb(store, args, sid, raw, "redact").await,
         other => Err(err_json(
             &format!("unknown apps verb '{other}'"),
             raw,
@@ -1171,6 +1254,130 @@ async fn cmd_audit_records(db: &DbPool, board_id: &str, owner: &str, rest: &[&St
     Ok(json!({ "status": "ok", "audit": rows }))
 }
 
+async fn cmd_recipes(store: &SessionStore, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
+    if verb == "--help" {
+        return Ok(json!({ "status": "ok", "help": RECIPES_USAGE }));
+    }
+    let board_id = args
+        .first()
+        .ok_or_else(|| err_json("missing <board_id>", raw, "srv recipes <verb>", "srv recipes list <board_id>"))?;
+    let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+    let rest = &args[1..];
+    match verb {
+        "list" => {
+            let recipes = pool
+                .srv_recipe_list(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv recipes list", "srv recipes list <board_id>"))?;
+            Ok(json!({ "status": "ok", "recipes": recipes }))
+        }
+        "add" => {
+            let name = val_after(rest, "--name").ok_or_else(|| {
+                err_json("missing --name <n>", raw, "srv recipes add", "srv recipes add <board_id> --name sync --when 'record.created'")
+            })?;
+            let when = val_after(rest, "--when").ok_or_else(|| {
+                err_json("missing --when <event>", raw, "srv recipes add", "srv recipes add <board_id> --when 'record.created'")
+            })?;
+            let match_json = val_after(rest, "--match");
+            let dedup = val_after(rest, "--dedup");
+            let actions = val_after(rest, "--actions").unwrap_or_else(|| "[]".to_string());
+            serde_json::from_str::<Value>(&actions)
+                .map_err(|e| err_json(&format!("invalid --actions json: {e}"), raw, "srv recipes add", "srv recipes add --actions '[{\"$set\":{\"status\":\"paid\"}}]'"))?;
+            let id = pool
+                .srv_recipe_add(board_id, &name, &when, match_json.as_deref(), true, dedup.as_deref(), &actions)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv recipes add", "srv recipes add <board_id> --name <n> --when '<event>'"))?;
+            Ok(json!({ "status": "ok", "recipe_id": id }))
+        }
+        "enable" => {
+            let name = rest
+                .first()
+                .ok_or_else(|| err_json("missing <name>", raw, "srv recipes enable", "srv recipes enable <board_id> sync on"))?;
+            let on = match rest.get(1).map(|v| v.as_str()) {
+                Some("on") => true,
+                Some("off") => false,
+                _ => {
+                    return Err(err_json(
+                        "expected on or off",
+                        raw,
+                        "srv recipes enable <board_id> <name> on|off",
+                        "srv recipes enable <board_id> sync on",
+                    ))
+                }
+            };
+            let enabled = pool
+                .srv_recipe_set_enabled(board_id, name, on)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv recipes enable", "srv recipes enable <board_id> <name> on"))?;
+            Ok(json!({ "status": "ok", "enabled": enabled }))
+        }
+        "remove" => {
+            let name = rest
+                .first()
+                .ok_or_else(|| err_json("missing <name>", raw, "srv recipes remove", "srv recipes remove <board_id> sync"))?;
+            let removed = pool
+                .srv_recipe_remove(board_id, name)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv recipes remove", "srv recipes remove <board_id> <name>"))?;
+            Ok(json!({ "status": "ok", "removed": removed }))
+        }
+        other => Err(err_json(
+            &format!("unknown recipes verb '{other}'"),
+            raw,
+            "srv recipes <verb>",
+            RECIPES_USAGE,
+        )),
+    }
+}
+
+async fn cmd_secrets(store: &SessionStore, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
+    if verb == "--help" {
+        return Ok(json!({ "status": "ok", "help": SECRETS_USAGE }));
+    }
+    let board_id = args
+        .first()
+        .ok_or_else(|| err_json("missing <board_id>", raw, "srv secrets <verb>", "srv secrets list <board_id>"))?;
+    let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+    let rest = &args[1..];
+    match verb {
+        "set" => {
+            let name = rest
+                .first()
+                .ok_or_else(|| err_json("missing <NAME>", raw, "srv secrets set", "srv secrets set <board_id> STRIPE sk_test_..."))?;
+            let value = rest
+                .get(1)
+                .ok_or_else(|| err_json("missing <value>", raw, "srv secrets set", "srv secrets set <board_id> STRIPE sk_test_..."))?;
+            pool.srv_secret_set(board_id, name, value)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv secrets set", "srv secrets set <board_id> <NAME> <value>"))?;
+            Ok(json!({ "status": "ok", "set": name.to_uppercase() }))
+        }
+        "list" => {
+            let secrets = pool
+                .srv_secret_list(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv secrets list", "srv secrets list <board_id>"))?;
+            Ok(json!({ "status": "ok", "secrets": secrets }))
+        }
+        "remove" => {
+            let name = rest
+                .first()
+                .ok_or_else(|| err_json("missing <NAME>", raw, "srv secrets remove", "srv secrets remove <board_id> STRIPE"))?;
+            let removed = pool
+                .srv_secret_remove(board_id, name)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv secrets remove", "srv secrets remove <board_id> <NAME>"))?;
+            Ok(json!({ "status": "ok", "removed": removed }))
+        }
+        other => Err(err_json(
+            &format!("unknown secrets verb '{other}'"),
+            raw,
+            "srv secrets <verb>",
+            SECRETS_USAGE,
+        )),
+    }
+}
+
 async fn cmd_files(store: &SessionStore, dir: &Path, sid: &str, verb: &str, args: &[&String], raw: &str) -> CmdResult {
     if verb == "--help" {
         return Ok(json!({ "status": "ok", "help": FILES_USAGE }));
@@ -1266,6 +1473,8 @@ pub async fn execute_srv(
     match group.as_str() {
         "apps" => cmd_apps(store, sid, verb, args, raw).await,
         "records" => cmd_records(store, sid, verb, args, raw).await,
+        "recipes" => cmd_recipes(store, sid, verb, args, raw).await,
+        "secrets" => cmd_secrets(store, sid, verb, args, raw).await,
         "files" => cmd_files(store, dir, sid, verb, args, raw).await,
         other => Err(err_json(&format!("unknown group '{other}'"), raw, "srv <group> <verb>", USAGE)),
     }

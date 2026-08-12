@@ -56,6 +56,8 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
         tracing::warn!("scheduler: reschedule job {} failed: {e}", job.id);
     }
 
+    dispatch_cron_recipes(store, &job).await;
+
     let action: Value = match serde_json::from_str(&job.action) {
         Ok(v) => v,
         Err(e) => {
@@ -133,8 +135,55 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
     }
 }
 
-async fn run_worker(store: SessionStore) {
-    let client = match reqwest::Client::builder().build() {
+async fn dispatch_cron_recipes(store: &SessionStore, job: &SrvJob) {
+    let pool = match store.board_pool(&job.board_id).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!("scheduler: board pool for job {} failed: {e}", job.id);
+            return;
+        }
+    };
+    let recipes = match pool.srv_recipe_list(&job.board_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("scheduler: recipe list for job {} failed: {e}", job.id);
+            return;
+        }
+    };
+    let wanted = format!("cron:{}", job.name);
+    let mut secrets = zw_recipe::Secrets::new();
+    if let Ok(map) = pool.srv_secrets_map(&job.board_id).await {
+        for (name, value) in map {
+            secrets.insert(&name, &value);
+        }
+    }
+    let engine = zw_recipe::Engine { db: pool.as_ref() };
+    for sr in recipes {
+        let Some(recipe) = to_recipe(&sr) else { continue };
+        if recipe.when != wanted {
+            continue;
+        }
+        let ctx = zw_recipe::EventContext::cron(&job.board_id, &job.name, &Value::Null);
+        engine.run_recipe(&recipe, &secrets, &ctx, false).await;
+    }
+}
+
+fn to_recipe(sr: &zw_db::recipes::SrvRecipe) -> Option<zw_recipe::Recipe> {
+    let actions = match sr.actions_json.as_array() {
+        Some(arr) => arr.clone(),
+        None => return None,
+    };
+    Some(zw_recipe::Recipe {
+        name: sr.name.clone(),
+        when: sr.when_json.clone(),
+        match_json: sr.match_json.clone(),
+        enabled: sr.enabled,
+        dedup_on: sr.dedup_on.clone(),
+        actions,
+    })
+}
+
+async fn run_worker(store: SessionStore) {    let client = match reqwest::Client::builder().build() {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("scheduler: failed to build http client: {e}");
