@@ -1,3 +1,5 @@
+use crate::context::EventContext;
+use crate::rule::EventKind;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -82,6 +84,112 @@ pub fn substitute_value(secrets: &Secrets, v: &Value) -> Value {
             Value::Object(out)
         }
         other => other.clone(),
+    }
+}
+
+fn event_scalar(ctx: &EventContext, name: &str) -> Option<Value> {
+    match name {
+        "seq" => ctx.seq.map(Value::from),
+        "kind" => Some(Value::String(match ctx.kind {
+            EventKind::Created => "created",
+            EventKind::Updated => "updated",
+            EventKind::Deleted => "deleted",
+            EventKind::Inbound => "inbound",
+            EventKind::Cron => "cron",
+        }.to_string())),
+        "board" => Some(Value::String(ctx.board_id.clone())),
+        "writer" => ctx.writer.clone().map(Value::String),
+        "cron" => ctx.cron_name.clone().map(Value::String),
+        _ => None,
+    }
+}
+
+fn resolve_event_token(secrets: &Secrets, ctx: &EventContext, token: &str) -> anyhow::Result<Value> {
+    let t = token.trim();
+    if let Some(name) = t.strip_prefix("secrets.") {
+        let v = secrets
+            .get(name)
+            .ok_or_else(|| anyhow::anyhow!("unknown secret '{name}' in template"))?;
+        return Ok(Value::String(v.to_string()));
+    }
+    if let Some(path) = t.strip_prefix("payload.") {
+        let v = zw_expr::get_path(&ctx.payload, &format!("$.{path}"));
+        if v.is_null() {
+            anyhow::bail!("unknown payload field '{{{{payload.{path}}}}}' in template");
+        }
+        return Ok(v);
+    }
+    if let Some(v) = event_scalar(ctx, t) {
+        return Ok(v);
+    }
+    if let Some(v) = secrets.get(t) {
+        return Ok(Value::String(v.to_string()));
+    }
+    if t.starts_with("secrets.") {
+        anyhow::bail!("unknown secret '{}' in template", &t["secrets.".len()..]);
+    }
+    anyhow::bail!("unknown template key '{{{t}}}'")
+}
+
+/// Render a single template string against secrets + event context. When the
+/// whole string is one template token whose value is not a string, the raw JSON
+/// value is returned so numeric payload fields stay numeric.
+fn render_event_string(secrets: &Secrets, ctx: &EventContext, input: &str) -> anyhow::Result<Value> {
+    if let Some(inner) = input.trim().strip_prefix("{{").and_then(|s| s.strip_suffix("}}")) {
+        if !inner.contains("{{") && !inner.contains("}}") {
+            let v = resolve_event_token(secrets, ctx, inner)?;
+            if !v.is_string() {
+                return Ok(v);
+            }
+        }
+    }
+    let input = secrets.substitute(input);
+    let mut out = String::new();
+    let mut rest = input.as_str();
+    while let Some(start) = rest.find("{{") {
+        let Some(end_rel) = rest[start..].find("}}") else {
+            out.push_str(rest);
+            break;
+        };
+        let end = start + end_rel + 2;
+        out.push_str(&rest[..start]);
+        let token = &rest[start + 2..start + end_rel];
+        let v = resolve_event_token(secrets, ctx, token)?;
+        out.push_str(&scalar_string(&v));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    Ok(Value::String(out))
+}
+
+fn scalar_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Recursively substitute secrets + event context (`{{payload.x}}`,
+/// `{{seq}}`, `{{board}}`, `{{writer}}`, `{{cron}}`, `{{kind}}`,
+/// `{{secrets.NAME}}`) in a JSON value. Unknown template keys are an error.
+pub fn substitute_event(secrets: &Secrets, ctx: &EventContext, v: &Value) -> anyhow::Result<Value> {
+    match v {
+        Value::String(s) => render_event_string(secrets, ctx, s),
+        Value::Array(arr) => arr
+            .iter()
+            .map(|x| substitute_event(secrets, ctx, x))
+            .collect::<anyhow::Result<Vec<_>>>()
+            .map(Value::Array),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, val) in map {
+                out.insert(k.clone(), substitute_event(secrets, ctx, val)?);
+            }
+            Ok(Value::Object(out))
+        }
+        other => Ok(other.clone()),
     }
 }
 

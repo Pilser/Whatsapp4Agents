@@ -122,6 +122,34 @@ impl DbPool {
             _ => None,
         })
     }
+
+    pub async fn srv_app_set_webhook_secret(&self, board_id: &str, owner: &str, secret: Option<&str>) -> anyhow::Result<()> {
+        let mut conn = self.conn().await;
+        check_owner(&mut conn, board_id, owner).await?;
+        conn.execute(
+            &format!("UPDATE wb_apps SET webhook_secret = {} WHERE board_id = '{}'", col(secret), sq(board_id)),
+            Params::Positional(vec![]),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn srv_webhook_secret_get(&self, board_id: &str) -> anyhow::Result<Option<String>> {
+        let conn = self.conn().await;
+        let mut rows = conn
+            .query(
+                "SELECT webhook_secret FROM wb_apps WHERE board_id = ?1",
+                Params::Positional(vec![TursoValue::from(board_id)]),
+            )
+            .await?;
+        match rows.next().await? {
+            Some(row) => match row.get_value(0)? {
+                TursoValue::Text(s) if !s.is_empty() => Ok(Some(s)),
+                _ => Ok(None),
+            },
+            None => Ok(None),
+        }
+    }
 }
 
 fn compile(field: &str, expr: &str) -> anyhow::Result<Expr> {

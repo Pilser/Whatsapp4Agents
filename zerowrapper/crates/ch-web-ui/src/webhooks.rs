@@ -23,6 +23,13 @@ pub fn waos_signature(body: &str, secret: &str) -> String {
     STANDARD.encode(mac.finalize().into_bytes())
 }
 
+pub fn waos_signature_hex(body: &[u8], secret: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    mac.update(body);
+    let bytes = mac.finalize().into_bytes();
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 fn fmt_iso(now: &NaiveDateTime) -> String {
     now.format("%Y-%m-%d %H:%M:%S").to_string()
 }

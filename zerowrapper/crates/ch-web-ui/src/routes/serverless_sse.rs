@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use topcoat::Result;
-use topcoat::router::{IntoResponse, Response, path_param, route, uri};
+use topcoat::router::{IntoResponse, Response, StatusCode, path_param, route, uri};
 use topcoat::router::content::sse::{Event, KeepAlive, Sse};
 use topcoat::context::{Cx, app_context};
 
@@ -67,6 +67,16 @@ pub async fn srv_sse_events(cx: &Cx) -> Result<Response> {
     let filter = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty());
     let filter_json: Option<serde_json::Value> = filter.and_then(|f| serde_json::from_str(&f).ok());
 
+    match crate::routes::serverless::authorize_identity(cx, ctx, &board_id).await {
+        Ok(Some(crate::routes::serverless::SrvIdentity::AppKey { role, .. })) if role == "customer" => {
+            return Ok(crate::routes::serverless::srv_json_response(
+                StatusCode::FORBIDDEN,
+                serde_json::json!({"error": "not permitted for customer keys"}),
+            ))
+        }
+        Ok(_) => {}
+        Err(resp) => return Ok(resp),
+    }
     if let Err(resp) = crate::routes::serverless::authorize_read(cx, ctx, &board_id).await {
         return Ok(resp);
     }

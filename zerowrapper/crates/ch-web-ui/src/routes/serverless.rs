@@ -20,6 +20,10 @@ fn json_response(status: StatusCode, v: serde_json::Value) -> Response {
         .unwrap()
 }
 
+pub(crate) fn srv_json_response(status: StatusCode, v: serde_json::Value) -> Response {
+    json_response(status, v)
+}
+
 async fn board_pool(ctx: &AppContext, board_id: &str) -> Result<std::sync::Arc<zw_db::DbPool>, Response> {
     if let Some((tpl, ver)) = zw_db::templates::parse_version_sid(board_id) {
         let materials = match ctx.materials() {
@@ -126,7 +130,7 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
         Ok(b) => b,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
-    let payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+    let mut payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
         Ok(p) => p,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
@@ -145,6 +149,13 @@ pub async fn srv_submit(cx: &Cx, body: Body) -> Result<Response> {
         Err(resp) => return Ok(resp),
     };
     let writer = request_writer(cx, &identity);
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    if let Some(s) = &scope {
+        force_scope(&mut payload, s);
+    }
 
     let upsert = params.get("upsert").is_some()
         || matches!(params.get("upsert").map(|v| *v), Some("1") | Some("true"));
@@ -175,7 +186,7 @@ async fn require_public_readable(ctx: &AppContext, board_id: &str) -> Result<Opt
 
 pub(crate) enum SrvIdentity {
     LegacyAdmin,
-    AppKey { role: String, writer: Option<String> },
+    AppKey { role: String, writer: Option<String>, scope: Option<String> },
 }
 
 fn role_ge(role: &str, need: &str) -> bool {
@@ -189,6 +200,57 @@ fn role_ge(role: &str, need: &str) -> bool {
         }
     }
     rank(role) >= rank(need)
+}
+
+fn customer_scope(identity: &SrvIdentity) -> Option<String> {
+    match identity {
+        SrvIdentity::AppKey { role, scope, .. } if role == "customer" => scope.clone(),
+        _ => None,
+    }
+}
+
+fn scope_cond(scope: &str) -> zw_db::filters::FilterCond {
+    zw_db::filters::FilterCond {
+        field: "$.customer_id".to_string(),
+        op: zw_db::filters::Op::Eq,
+        value: serde_json::json!(scope),
+    }
+}
+
+async fn read_scope(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result<Option<String>, Response> {
+    match authorize_read(cx, ctx, board_id).await? {
+        Some(id) => Ok(customer_scope(&id)),
+        None => Ok(None),
+    }
+}
+
+async fn write_scope(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result<Option<String>, Response> {
+    match authorize_write(cx, ctx, board_id, true).await? {
+        Some(id) => Ok(customer_scope(&id)),
+        None => Ok(None),
+    }
+}
+
+fn refuse_customer(scope: &Option<String>) -> Result<(), Response> {
+    if scope.is_some() {
+        return Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "not permitted for customer keys"})));
+    }
+    Ok(())
+}
+
+fn record_owned(record: &zw_db::serverless::SrvRecord, scope: &str) -> bool {
+    record
+        .payload
+        .get("customer_id")
+        .and_then(|v| v.as_str())
+        .map(|c| c == scope)
+        .unwrap_or(false)
+}
+
+fn force_scope(payload: &mut serde_json::Value, scope: &str) {
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("customer_id".to_string(), serde_json::json!(scope));
+    }
 }
 
 fn bearer_token(cx: &Cx) -> Option<String> {
@@ -254,7 +316,7 @@ async fn rate_action(cx: &Cx, ctx: &AppContext, board_id: &str, token: &Option<S
         .unwrap())
 }
 
-async fn authorize_identity(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result<Option<SrvIdentity>, Response> {
+pub(crate) async fn authorize_identity(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result<Option<SrvIdentity>, Response> {
     let Some(token) = bearer_token(cx) else {
         return Ok(None);
     };
@@ -263,7 +325,7 @@ async fn authorize_identity(cx: &Cx, ctx: &AppContext, board_id: &str) -> Result
     }
     match ctx.db.system().srv_key_auth(&token).await {
         Ok(Some(key)) if key.board_id == board_id => {
-            Ok(Some(SrvIdentity::AppKey { role: key.role, writer: key.writer }))
+            Ok(Some(SrvIdentity::AppKey { role: key.role, writer: key.writer, scope: key.scope }))
         }
         Ok(Some(_)) => Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "key not valid for this board"}))),
         Ok(None) => Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "unauthorized"}))),
@@ -280,7 +342,7 @@ async fn authorize_write(cx: &Cx, ctx: &AppContext, board_id: &str, enforce: boo
         Err(resp) => return Err(resp),
     };
     if let Some(SrvIdentity::AppKey { role, .. }) = &identity {
-        if !role_ge(role, "writer") {
+        if !role_ge(role, "writer") && role != "customer" {
             return Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "write requires an authorization key"})));
         }
     }
@@ -319,6 +381,7 @@ pub(crate) async fn authorize_read(cx: &Cx, ctx: &AppContext, board_id: &str) ->
     match &identity {
         Some(SrvIdentity::LegacyAdmin) => Ok(identity),
         Some(SrvIdentity::AppKey { role, .. }) if role_ge(role, "reader") => Ok(identity),
+        Some(SrvIdentity::AppKey { role, .. }) if role == "customer" => Ok(identity),
         Some(SrvIdentity::AppKey { .. }) => {
             Err(json_response(StatusCode::FORBIDDEN, serde_json::json!({"error": "read requires an authorization key"})))
         }
@@ -419,9 +482,10 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             .collect();
         let orders: Vec<(&str, bool)> = order.iter().map(|(p, d)| (p.as_str(), *d)).collect();
 
-    if let Err(resp) = authorize_read(cx, ctx, board_id).await {
-        return Ok(resp);
-    }
+    let scope = match read_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
 
     let records = if let Some(q) = params.get("q").map(|q| url_decode(q)).filter(|q| !q.is_empty()) {
         let mut conds = if let Some(f) = params.get("filter").map(|f| url_decode(f)).filter(|f| !f.is_empty()) {
@@ -436,6 +500,9 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
         } else {
             Vec::new()
         };
+        if let Some(s) = &scope {
+            conds.push(scope_cond(s));
+        }
         if let Some(w) = &writer {
             conds.insert(0, FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
         }
@@ -455,6 +522,9 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             Ok(sf) => sf,
             Err(e) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
         };
+        if let Some(s) = &scope {
+            filter.conds.push(scope_cond(s));
+        }
         if let Some(w) = &writer {
             filter.conds.push(FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) });
         }
@@ -469,7 +539,10 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             }
         }
     } else if let Some(w) = &writer {
-        let conds = vec![FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) }];
+        let mut conds = vec![FilterCond { field: "$.writer".to_string(), op: Op::Eq, value: serde_json::json!(w) }];
+        if let Some(s) = &scope {
+            conds.push(scope_cond(s));
+        }
         match pool.srv_record_filter(board_id, &conds, &[], limit, offset).await {
             Ok(r) => r,
             Err(e) => {
@@ -478,7 +551,8 @@ pub async fn srv_records(cx: &Cx) -> Result<Response> {
             }
         }
     } else {
-        match pool.srv_record_list(board_id, limit, None, offset).await {
+        let conds: Vec<FilterCond> = scope.iter().map(|s| scope_cond(s)).collect();
+        match pool.srv_record_filter(board_id, &conds, &[], limit, offset).await {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("srv_records: list error: {}", e);
@@ -510,7 +584,11 @@ pub async fn srv_aggregate(cx: &Cx) -> Result<Response> {
     let field = params.get("field").map(|s| s.to_string());
     let group_by = params.get("group_by").map(|s| s.to_string());
 
-    if let Err(resp) = authorize_read(cx, ctx, board_id).await {
+    let scope = match read_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    if let Err(resp) = refuse_customer(&scope) {
         return Ok(resp);
     }
 
@@ -554,9 +632,10 @@ pub async fn srv_record(cx: &Cx) -> Result<Response> {
         None => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "missing or invalid seq"}))),
     };
 
-    if let Err(resp) = authorize_read(cx, ctx, board_id).await {
-        return Ok(resp);
-    }
+    let scope = match read_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
 
     let pool = match board_pool(ctx, board_id).await {
         Ok(p) => p,
@@ -565,6 +644,11 @@ pub async fn srv_record(cx: &Cx) -> Result<Response> {
 
     match pool.srv_record_get(board_id, seq).await {
         Ok(Some(record)) => {
+            if let Some(s) = &scope {
+                if !record_owned(&record, s) {
+                    return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"})));
+                }
+            }
             let records_json = params_to_json(&[record]);
             let rec = records_json[0].clone();
             Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "record": rec})))
@@ -603,22 +687,35 @@ pub async fn srv_record_put(cx: &Cx, body: Body) -> Result<Response> {
         Ok(id) => id,
         Err(resp) => return Ok(resp),
     };
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
 
     let body_bytes = match to_bytes(body, 1_000_000).await {
         Ok(b) => b,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
-    let payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+    let mut payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
         Ok(p) => p,
         Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
     };
+    if let Some(s) = &scope {
+        force_scope(&mut payload, s);
+    }
 
     if let Err(e) = pool.srv_validate(board_id, &payload).await {
         return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()})));
     }
 
     match pool.srv_record_get(board_id, seq).await {
-        Ok(Some(_)) => {}
+        Ok(Some(rec)) => {
+            if let Some(s) = &scope {
+                if !record_owned(&rec, s) {
+                    return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"})));
+                }
+            }
+        }
         Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
         Err(e) => {
             tracing::warn!("srv_record_put: get error: {}", e);
@@ -666,6 +763,10 @@ pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
         Ok(id) => id,
         Err(resp) => return Ok(resp),
     };
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
 
     let body_bytes = match to_bytes(body, 1_000_000).await {
         Ok(b) => b,
@@ -677,7 +778,13 @@ pub async fn srv_record_patch_route(cx: &Cx, body: Body) -> Result<Response> {
     };
 
     match pool.srv_record_get(board_id, seq).await {
-        Ok(Some(_)) => {}
+        Ok(Some(rec)) => {
+            if let Some(s) = &scope {
+                if !record_owned(&rec, s) {
+                    return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"})));
+                }
+            }
+        }
         Ok(None) => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
         Err(e) => {
             tracing::warn!("srv_record_patch_route: get error: {}", e);
@@ -703,6 +810,7 @@ async fn persist_upload(
     data: &[u8],
     extra: serde_json::Map<String, serde_json::Value>,
     writer: Option<&str>,
+    scope: Option<&str>,
 ) -> Response {
     let pool = match board_pool(ctx, board_id).await {
         Ok(p) => p,
@@ -731,6 +839,9 @@ async fn persist_upload(
     payload.insert("name".to_string(), serde_json::json!(filename));
     payload.insert("type".to_string(), serde_json::json!(content_type));
     payload.insert("size".to_string(), serde_json::json!(data.len()));
+    if let Some(s) = scope {
+        payload.insert("customer_id".to_string(), serde_json::json!(s));
+    }
 
     match pool.srv_record_insert(board_id, &serde_json::Value::Object(payload), writer, false).await {
         Ok(seq) => {
@@ -770,6 +881,11 @@ pub async fn srv_upload(cx: &Cx, body: Body) -> Result<Response> {
         Err(resp) => return Ok(resp),
     };
     let writer = request_writer(cx, &identity);
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    let scope_ref = scope.as_deref();
 
     let content_type = headers(cx)
         .get("Content-Type")
@@ -807,7 +923,7 @@ pub async fn srv_upload(cx: &Cx, body: Body) -> Result<Response> {
         };
         let filename = file.filename.unwrap_or_else(|| "upload".to_string());
         let file_type = file.content_type.unwrap_or_else(|| "application/octet-stream".to_string());
-        return Ok(persist_upload(ctx, board_id, &app, &filename, &file_type, &file.data, extra, writer.as_deref()).await);
+        return Ok(persist_upload(ctx, board_id, &app, &filename, &file_type, &file.data, extra, writer.as_deref(), scope_ref).await);
     }
 
     let filename = headers(cx)
@@ -816,7 +932,7 @@ pub async fn srv_upload(cx: &Cx, body: Body) -> Result<Response> {
         .unwrap_or("upload")
         .to_string();
 
-    Ok(persist_upload(ctx, board_id, &app, &filename, &content_type, &body_bytes, serde_json::Map::new(), writer.as_deref()).await)
+    Ok(persist_upload(ctx, board_id, &app, &filename, &content_type, &body_bytes, serde_json::Map::new(), writer.as_deref(), scope_ref).await)
 }
 
 #[route(GET "/api/srv/{board_id}/file")]
@@ -935,11 +1051,12 @@ pub async fn srv_keys_issue(cx: &Cx, body: Body) -> Result<Response> {
     };
     let role = req.get("role").and_then(|r| r.as_str()).unwrap_or("writer").to_string();
     let writer = req.get("writer").and_then(|w| w.as_str()).map(str::to_string);
+    let scope = req.get("scope").and_then(|s| s.as_str()).map(str::to_string);
 
-    match ctx.db.key_issue(board_id, &app.owner_key, &role, writer.as_deref()).await {
+    match ctx.db.key_issue(board_id, &app.owner_key, &role, writer.as_deref(), scope.as_deref()).await {
         Ok((bucket, secret)) => Ok(json_response(
             StatusCode::CREATED,
-            serde_json::json!({"ok": true, "bucket": bucket, "key": secret, "role": role, "writer": writer}),
+            serde_json::json!({"ok": true, "bucket": bucket, "key": secret, "role": role, "writer": writer, "scope": scope}),
         )),
         Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
     }
@@ -1247,6 +1364,74 @@ fn to_recipe(sr: &zw_db::recipes::SrvRecipe) -> Option<zw_recipe::Recipe> {
     })
 }
 
+async fn dispatch_inbound(pool: &std::sync::Arc<zw_db::DbPool>, board_id: &str, payload: &serde_json::Value) {
+    let recipes = match pool.srv_recipe_list(board_id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("dispatch_inbound: list error: {}", e);
+            return;
+        }
+    };
+    let mut secrets = zw_recipe::Secrets::new();
+    if let Ok(map) = pool.srv_secrets_map(board_id).await {
+        for (name, value) in map {
+            secrets.insert(&name, &value);
+        }
+    }
+    let engine = zw_recipe::Engine { db: pool };
+    for sr in recipes {
+        let Some(recipe) = to_recipe(&sr) else { continue };
+        if !matches!(recipe.event_kind(), Some(zw_recipe::EventKind::Inbound)) {
+            continue;
+        }
+        let ctx = zw_recipe::EventContext::inbound(board_id, payload);
+        let outcome = engine.run_recipe(&recipe, &secrets, &ctx, false).await;
+        if !outcome.report.logs.is_empty() {
+            tracing::debug!("dispatch_inbound: recipe {} logs: {:?}", recipe.name, outcome.report.logs);
+        }
+    }
+}
+
+#[route(POST "/api/srv/{board_id}/events")]
+pub async fn srv_events_inbound(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    let body_bytes = match to_bytes(body, 10_000_000).await {
+        Ok(b) => b,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid body"}))),
+    };
+    let payload: serde_json::Value = match serde_json::from_slice(&body_bytes) {
+        Ok(v) => v,
+        Err(_) => return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "invalid json"}))),
+    };
+
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let secret = match pool.srv_webhook_secret_get(board_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("srv_events_inbound: secret get error: {}", e);
+            return Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"error": "secret lookup failed"})));
+        }
+    };
+    if let Some(secret) = &secret {
+        let provided = headers(cx)
+            .get("X-Hub-Signature-256")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.strip_prefix("sha256=").unwrap_or(s).to_string());
+        let expected = crate::webhooks::waos_signature_hex(&body_bytes, secret);
+        let ok = provided.as_ref().map(|p| p.eq_ignore_ascii_case(&expected)).unwrap_or(false);
+        if !ok {
+            return Ok(json_response(StatusCode::UNAUTHORIZED, serde_json::json!({"error": "invalid signature"})));
+        }
+    }
+
+    dispatch_inbound(&pool, board_id, &payload).await;
+    Ok(json_response(StatusCode::ACCEPTED, serde_json::json!({"ok": true})))
+}
+
 async fn enqueue_hook_events(ctx: &AppContext, board_id: &str, event: &str) {
     match ctx.db.hook_urls(board_id).await {
         Ok(hooks) => {
@@ -1281,6 +1466,16 @@ pub async fn srv_record_delete_route(cx: &Cx) -> Result<Response> {
     if let Err(resp) = authorize_write(cx, ctx, &board_id, true).await {
         return Ok(resp);
     }
+    let scope = match write_scope(cx, ctx, &board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    if let Some(s) = &scope {
+        match pool.srv_record_get(&board_id, seq).await {
+            Ok(Some(rec)) if record_owned(&rec, s) => {}
+            _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+        }
+    }
     match pool.srv_record_delete_one(&board_id, seq).await {
         Ok(true) => {
             let event = crate::realtime::record_event("deleted", &board_id, seq, None);
@@ -1305,7 +1500,11 @@ pub async fn srv_join(cx: &Cx) -> Result<Response> {
     let limit: i64 = params.get("limit").and_then(|l| l.parse().ok()).unwrap_or(50).clamp(1, 500);
     let offset: i64 = params.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0).max(0);
 
-    if let Err(resp) = authorize_read(cx, ctx, &board_id).await {
+    let scope = match read_scope(cx, ctx, &board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    if let Err(resp) = refuse_customer(&scope) {
         return Ok(resp);
     }
 
@@ -1403,6 +1602,7 @@ pub async fn srv_config(cx: &Cx) -> Result<Response> {
     let redact = pool.srv_redact_get(board_id).await;
     let recipes = pool.srv_recipe_list(board_id).await;
     let secrets = pool.srv_secret_list(board_id).await;
+    let webhook_secret_set = pool.srv_webhook_secret_get(board_id).await.map(|s| s.is_some()).unwrap_or(false);
     Ok(json_response(
         StatusCode::OK,
         serde_json::json!({
@@ -1419,6 +1619,7 @@ pub async fn srv_config(cx: &Cx) -> Result<Response> {
             "redact": redact.unwrap_or(None),
             "recipes": recipes.unwrap_or_default(),
             "secrets": secrets.unwrap_or_default(),
+            "webhook_secret_set": webhook_secret_set,
         }),
     ))
 }
@@ -1615,6 +1816,59 @@ pub async fn srv_redact_set_route(cx: &Cx, body: Body) -> Result<Response> {
 #[route(DELETE "/api/srv/{board_id}/redact")]
 pub async fn srv_redact_clear_route(cx: &Cx, _body: Body) -> Result<Response> {
     set_config_kind(app_context(cx), cx, Body::empty(), "redact", true).await
+}
+
+#[route(PUT "/api/srv/{board_id}/webhook_secret")]
+pub async fn srv_webhook_secret_set_route(cx: &Cx, body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let app = match pool.srv_app_by_id(board_id).await {
+        Ok(Some(app)) => app,
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    };
+    let req = match parse_json_body(body, 1_000_000).await {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+    let secret = match req.get("secret").and_then(|s| s.as_str()) {
+        Some(s) if !s.is_empty() => Some(s.to_string()),
+        _ => None,
+    };
+    if secret.as_ref().map(|s| s.len()) < Some(16) {
+        return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "secret must be at least 16 chars"})));
+    }
+    match pool.srv_app_set_webhook_secret(board_id, &app.owner_key, secret.as_deref()).await {
+        Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "set": secret.is_some()}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
+}
+
+#[route(DELETE "/api/srv/{board_id}/webhook_secret")]
+pub async fn srv_webhook_secret_clear_route(cx: &Cx, _body: Body) -> Result<Response> {
+    let ctx: &AppContext = app_context(cx);
+    let board_id = path_param::<BoardId>(cx);
+    if let Err(resp) = require_admin(cx, ctx, board_id).await {
+        return Ok(resp);
+    }
+    let pool = match board_pool(ctx, board_id).await {
+        Ok(p) => p,
+        Err(resp) => return Ok(resp),
+    };
+    let app = match pool.srv_app_by_id(board_id).await {
+        Ok(Some(app)) => app,
+        _ => return Ok(json_response(StatusCode::NOT_FOUND, serde_json::json!({"error": "not found"}))),
+    };
+    match pool.srv_app_set_webhook_secret(board_id, &app.owner_key, None).await {
+        Ok(()) => Ok(json_response(StatusCode::OK, serde_json::json!({"ok": true, "set": false}))),
+        Err(e) => Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": e.to_string()}))),
+    }
 }
 
 #[route(PATCH "/api/srv/{board_id}/app")]
@@ -1926,6 +2180,10 @@ pub async fn srv_bulk(cx: &Cx, body: Body) -> Result<Response> {
         Err(resp) => return Ok(resp),
     };
     let writer = request_writer(cx, &identity);
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
     let req = match parse_json_body(body, 10_000_000).await {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
@@ -1935,6 +2193,16 @@ pub async fn srv_bulk(cx: &Cx, body: Body) -> Result<Response> {
         _ => {
             return Ok(json_response(StatusCode::BAD_REQUEST, serde_json::json!({"error": "expected non-empty records array"})))
         }
+    };
+    let records: Vec<serde_json::Value> = match &scope {
+        Some(s) => {
+            let mut rs = records;
+            for r in &mut rs {
+                force_scope(r, s);
+            }
+            rs
+        }
+        None => records,
     };
     let upsert = req.get("upsert").and_then(|u| u.as_bool()).unwrap_or(false);
     match pool.srv_record_bulk_insert(&board_id, &records, writer.as_deref(), upsert).await {
@@ -1952,7 +2220,11 @@ pub async fn srv_bulk(cx: &Cx, body: Body) -> Result<Response> {
 pub async fn srv_records_delete(cx: &Cx) -> Result<Response> {
     let ctx: &AppContext = app_context(cx);
     let board_id = path_param::<BoardId>(cx);
-    if let Err(resp) = authorize_write(cx, ctx, board_id, true).await {
+    let scope = match write_scope(cx, ctx, board_id).await {
+        Ok(s) => s,
+        Err(resp) => return Ok(resp),
+    };
+    if let Err(resp) = refuse_customer(&scope) {
         return Ok(resp);
     }
     let pool = match board_pool(ctx, board_id).await {

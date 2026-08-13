@@ -79,23 +79,7 @@ impl DbPool {
 
     pub async fn srv_ttl_clause(&self, board_id: &str, params: &mut Vec<Value>) -> anyhow::Result<Option<String>> {
         let ttl = self.srv_ttl_get(board_id).await?;
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(n) = ttl.seconds {
-            parts.push(format!("created_at < datetime('now', '-' || {n} || ' seconds')"));
-        }
-        if let Some(f) = ttl.field {
-            let p1 = params.len() + 1;
-            params.push(Value::from(f.clone()));
-            let p2 = params.len() + 1;
-            params.push(Value::from(f));
-            parts.push(format!(
-                "json_extract(payload, ?{p1}) IS NOT NULL AND CAST(json_extract(payload, ?{p2}) AS TEXT) < datetime('now')"
-            ));
-        }
-        if parts.is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(parts.join(" OR ")))
+        Ok(ttl_frag(&ttl, params))
     }
 
     pub async fn srv_ttl_sweep(&self) -> anyhow::Result<u64> {
@@ -155,4 +139,27 @@ impl DbPool {
         }
         Ok(total)
     }
+}
+
+/// Build the TTL expiry fragment from an already-loaded `SrvTtl` (no DB
+/// access), appending any bound params. Safe to call while a transaction holds
+/// the connection.
+pub fn ttl_frag(ttl: &SrvTtl, params: &mut Vec<Value>) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(n) = ttl.seconds {
+        parts.push(format!("created_at < datetime('now', '-' || {n} || ' seconds')"));
+    }
+    if let Some(f) = &ttl.field {
+        let p1 = params.len() + 1;
+        params.push(Value::from(f.clone()));
+        let p2 = params.len() + 1;
+        params.push(Value::from(f.clone()));
+        parts.push(format!(
+            "json_extract(payload, ?{p1}) IS NOT NULL AND CAST(json_extract(payload, ?{p2}) AS TEXT) < datetime('now')"
+        ));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join(" OR "))
 }

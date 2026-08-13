@@ -12,6 +12,8 @@ pub struct SrvApiKey {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub writer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revoked_at: Option<String>,
@@ -38,7 +40,7 @@ fn key_hash(secret: &str) -> String {
 }
 
 fn valid_role(role: &str) -> bool {
-    matches!(role, "reader" | "writer" | "list" | "admin")
+    matches!(role, "customer" | "reader" | "writer" | "list" | "admin")
 }
 
 impl DbPool {
@@ -83,25 +85,35 @@ async fn read_key(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvApiKey>> {
             Value::Text(s) => Some(s),
             _ => None,
         };
-        let created_at = match row.get_value(4)? {
-            Value::Text(s) => s,
-            _ => return Err(anyhow::anyhow!("invalid created_at")),
-        };
-        let revoked_at = match row.get_value(5)? {
+        let scope = match row.get_value(4)? {
             Value::Text(s) => Some(s),
             _ => None,
         };
-        Ok(Some(SrvApiKey { bucket, board_id, role, writer, created_at, revoked_at }))
+        let created_at = match row.get_value(5)? {
+            Value::Text(s) => s,
+            _ => return Err(anyhow::anyhow!("invalid created_at")),
+        };
+        let revoked_at = match row.get_value(6)? {
+            Value::Text(s) => Some(s),
+            _ => None,
+        };
+        Ok(Some(SrvApiKey { bucket, board_id, role, writer, scope, created_at, revoked_at }))
     } else {
         Ok(None)
     }
 }
 
 impl DbPool {
-    pub async fn srv_key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
+    pub async fn srv_key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>, scope: Option<&str>) -> anyhow::Result<(String, String)> {
         self.keys_check_owned(board_id, owner).await?;
         if !valid_role(role) {
-            anyhow::bail!("invalid role '{role}' (expected reader, writer, list, admin)");
+            anyhow::bail!("invalid role '{role}' (expected customer, reader, writer, list, admin)");
+        }
+        if role == "customer" && scope.is_none() {
+            anyhow::bail!("customer keys require a scope (customer id)");
+        }
+        if role != "customer" && scope.is_some() {
+            anyhow::bail!("only customer keys may carry a scope");
         }
         let conn = self.conn().await;
         let bucket = Uuid::new_v4().simple().to_string();
@@ -113,8 +125,12 @@ impl DbPool {
             Some(w) => format!("'{}'", sq(w)),
             None => "NULL".to_string(),
         };
+        let s = match scope {
+            Some(s) => format!("'{}'", sq(s)),
+            None => "NULL".to_string(),
+        };
         let sql = format!(
-            "INSERT INTO wb_keys (bucket, board_id, key_hash, role, writer) VALUES ('{bucket}', '{b}', '{h}', '{r}', {w})"
+            "INSERT INTO wb_keys (bucket, board_id, key_hash, role, writer, scope) VALUES ('{bucket}', '{b}', '{h}', '{r}', {w}, {s})"
         );
         conn.execute(&sql, Params::Positional(vec![])).await?;
         Ok((bucket, secret))
@@ -125,7 +141,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT bucket, board_id, role, writer, created_at, revoked_at \
+                "SELECT bucket, board_id, role, writer, scope, created_at, revoked_at \
                  FROM wb_keys WHERE board_id = ?1 ORDER BY created_at DESC",
                 Params::Positional(vec![Value::from(board_id)]),
             )
@@ -156,7 +172,7 @@ impl DbPool {
         let conn = self.conn().await;
         let mut rows = conn
             .query(
-                "SELECT bucket, board_id, role, writer, created_at, revoked_at \
+                "SELECT bucket, board_id, role, writer, scope, created_at, revoked_at \
                  FROM wb_keys WHERE key_hash = ?1 AND revoked_at IS NULL LIMIT 1",
                 Params::Positional(vec![Value::from(key_hash(secret))]),
             )

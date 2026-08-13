@@ -215,4 +215,6 @@ pub const SESSION_MIGRATIONS: &[&str] = &[
     "ALTER TABLE wb_apps ADD COLUMN computed_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN validate_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN redact_json TEXT;",
+    "ALTER TABLE wb_apps ADD COLUMN webhook_secret TEXT;",
+    "ALTER TABLE wb_keys ADD COLUMN scope TEXT;",
 ];

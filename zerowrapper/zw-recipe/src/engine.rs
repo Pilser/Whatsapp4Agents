@@ -111,9 +111,26 @@ impl<'a> Engine<'a> {
                 break;
             }
             if !dry_run {
-                if let Err(e) = self.execute_external(&kind, &action_obj, ctx, &mut report).await {
-                    report.logs.push(format!("{kind:?}: {e}"));
-                    break;
+                let external = match kind {
+                    ActionKind::UpsertOther
+                    | ActionKind::PatchOther
+                    | ActionKind::Transaction
+                    | ActionKind::Notify
+                    | ActionKind::Call
+                    | ActionKind::Schedule => crate::secrets::substitute_event(secrets, ctx, &action_obj),
+                    _ => Ok(action_obj.clone()),
+                };
+                match external {
+                    Ok(ext) => {
+                        if let Err(e) = self.execute_external(&kind, &ext, ctx, &mut report).await {
+                            report.logs.push(format!("{kind:?}: {e}"));
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        report.logs.push(format!("{kind:?}: {e}"));
+                        break;
+                    }
                 }
             }
             i += 1;
@@ -138,6 +155,8 @@ impl<'a> Engine<'a> {
     ) -> anyhow::Result<()> {
         match kind {
             ActionKind::UpsertOther => self.external_upsert(action, ctx).await?,
+            ActionKind::PatchOther => self.external_patch_other(action, ctx).await?,
+            ActionKind::Transaction => self.external_transaction(action, ctx).await?,
             ActionKind::Notify | ActionKind::Call => self.external_call(action, ctx, report).await?,
             ActionKind::Schedule => self.external_schedule(action).await?,
             _ => {}
@@ -150,9 +169,60 @@ impl<'a> Engine<'a> {
         let board = map
             .get("board")
             .and_then(|b| b.as_str())
-            .ok_or_else(|| anyhow::anyhow!("$upsert_other needs \"board\""))?;
+            .unwrap_or(&ctx.board_id);
         let payload = map.get("payload").cloned().unwrap_or_else(|| Value::Object(Map::new()));
         self.db.srv_record_insert(board, &payload, Some(&format!("recipe:{}", ctx.board_id)), true).await?;
+        Ok(())
+    }
+
+    async fn external_patch_other(&self, action: &Value, ctx: &EventContext) -> anyhow::Result<()> {
+        let map = action.as_object().ok_or_else(|| anyhow::anyhow!("$patch_other must be an object"))?;
+        let board = map
+            .get("board")
+            .and_then(|b| b.as_str())
+            .unwrap_or(&ctx.board_id);
+        let filter = map
+            .get("filter")
+            .ok_or_else(|| anyhow::anyhow!("$patch_other needs \"filter\""))?;
+        let patch = map
+            .get("patch")
+            .ok_or_else(|| anyhow::anyhow!("$patch_other needs \"patch\""))?;
+        let filter = zw_db::filters::parse_filter(&filter)
+            .map_err(|e| anyhow::anyhow!("$patch_other filter: {e}"))?;
+        self.db.srv_record_patch_first(board, &filter.conds, patch).await?;
+        Ok(())
+    }
+
+    async fn external_transaction(&self, action: &Value, ctx: &EventContext) -> anyhow::Result<()> {
+        let steps = action
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("$transaction must be an array of {{filter, patch}} steps"))?;
+        if steps.is_empty() {
+            anyhow::bail!("$transaction needs at least one step");
+        }
+        let mut db_steps: Vec<(Vec<zw_db::filters::FilterCond>, serde_json::Value)> = Vec::new();
+        for (i, step) in steps.iter().enumerate() {
+            let map = step
+                .as_object()
+                .ok_or_else(|| anyhow::anyhow!("$transaction step {i} must be an object"))?;
+            let board = map
+                .get("board")
+                .and_then(|b| b.as_str())
+                .unwrap_or(&ctx.board_id);
+            if board != ctx.board_id {
+                anyhow::bail!("$transaction step {i}: cross-board writes are not supported (same-board only)");
+            }
+            let filter = map
+                .get("filter")
+                .ok_or_else(|| anyhow::anyhow!("$transaction step {i} needs \"filter\""))?;
+            let patch = map
+                .get("patch")
+                .ok_or_else(|| anyhow::anyhow!("$transaction step {i} needs \"patch\""))?;
+            let filter = zw_db::filters::parse_filter(&filter)
+                .map_err(|e| anyhow::anyhow!("$transaction step {i} filter: {e}"))?;
+            db_steps.push((filter.conds, patch.clone()));
+        }
+        self.db.srv_record_patch_many(&ctx.board_id, &db_steps).await?;
         Ok(())
     }
 

@@ -132,9 +132,9 @@ impl SessionStore {
         Ok(())
     }
 
-    pub async fn key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>) -> anyhow::Result<(String, String)> {
+    pub async fn key_issue(&self, board_id: &str, owner: &str, role: &str, writer: Option<&str>, scope: Option<&str>) -> anyhow::Result<(String, String)> {
         self.ensure_board_owned(board_id, owner).await?;
-        self.system.srv_key_issue(board_id, owner, role, writer).await
+        self.system.srv_key_issue(board_id, owner, role, writer, scope).await
     }
 
     pub async fn key_list(&self, board_id: &str, owner: &str) -> anyhow::Result<Vec<SrvApiKey>> {

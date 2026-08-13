@@ -119,7 +119,7 @@ async fn api_keys_issue_auth_revoke_list() {
     register_board(&pool, &board, "owner").await;
     assert!(!pool.srv_board_has_keys(&board).await.unwrap(), "fresh board has no keys");
 
-    let (bucket, secret) = pool.srv_key_issue(&board, "owner", "writer", Some("alice")).await.unwrap();
+    let (bucket, secret) = pool.srv_key_issue(&board, "owner", "writer", Some("alice"), None).await.unwrap();
     assert_eq!(bucket.len(), 32);
     assert_eq!(secret.len(), 32);
     assert!(pool.srv_board_has_keys(&board).await.unwrap(), "board becomes key-enforced after issue");
@@ -129,9 +129,9 @@ async fn api_keys_issue_auth_revoke_list() {
     assert_eq!(key.role, "writer");
     assert_eq!(key.writer.as_deref(), Some("alice"));
 
-    let err = pool.srv_key_issue(&board, "mallory", "writer", None).await;
+    let err = pool.srv_key_issue(&board, "mallory", "writer", None, None).await;
     assert!(err.is_err(), "non-owner cannot issue keys");
-    let err = pool.srv_key_issue(&board, "owner", "superuser", None).await;
+    let err = pool.srv_key_issue(&board, "owner", "superuser", None, None).await;
     assert!(err.is_err(), "invalid role rejected");
 
     let keys = pool.srv_key_list(&board, "owner").await.unwrap();
@@ -155,7 +155,7 @@ async fn api_key_auth_isolated_between_boards() {
     let b = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
     register_board(&pool, &a, "owner").await;
     register_board(&pool, &b, "owner").await;
-    let (_bucket, secret) = pool.srv_key_issue(&a, "owner", "reader", None).await.unwrap();
+    let (_bucket, secret) = pool.srv_key_issue(&a, "owner", "reader", None, None).await.unwrap();
     let key = pool.srv_key_auth(&secret).await.unwrap().expect("secret authenticates");
     assert_eq!(key.board_id, a);
     assert_ne!(key.board_id, b);

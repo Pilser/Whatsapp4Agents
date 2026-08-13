@@ -572,6 +572,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                             "bucket": k.bucket,
                             "role": k.role,
                             "writer": k.writer,
+                            "scope": k.scope,
                             "created_at": k.created_at,
                             "revoked": k.revoked_at,
                         }))
@@ -580,9 +581,17 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                 }
                 "issue" => {
                     let role = val_after(rest, "--role").unwrap_or_else(|| "writer".to_string());
+                    if role == "customer" {
+                        return Err(err_json(
+                            "customer keys are storefront REST only",
+                            raw,
+                            "srv apps keys issue",
+                            "srv apps keys <board_id> issue --role admin|writer|reader|list",
+                        ));
+                    }
                     let writer = joined_flag(rest, "--writer");
                     let (bucket, secret) = store
-                        .key_issue(board_id, sid, &role, writer.as_deref())
+                        .key_issue(board_id, sid, &role, writer.as_deref(), None)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps keys issue", "srv apps keys <board_id> issue --role writer"))?;
                     Ok(json!({ "status": "ok", "key": secret, "bucket": bucket }))

@@ -771,6 +771,95 @@ impl DbPool {
         }
         Ok(out)
     }
+
+    /// Find the first record matching the filter and apply a patch to it (raw
+    /// write path — never re-dispatches recipes). Returns the merged payload,
+    /// or `None` when nothing matches.
+    pub async fn srv_record_patch_first(
+        &self,
+        board_id: &str,
+        conds: &[FilterCond],
+        ops: &serde_json::Value,
+    ) -> anyhow::Result<Option<serde_json::Value>> {
+        let (where_sql, mut params, _) = srv_filter_where(board_id, conds);
+        let where_sql = match self.srv_ttl_clause(board_id, &mut params).await? {
+            Some(ttl_frag) => format!("NOT ({ttl_frag}) AND {where_sql}"),
+            None => where_sql,
+        };
+        let sql = format!("SELECT seq FROM wb_records WHERE {where_sql} ORDER BY seq ASC LIMIT 1");
+        let conn = self.conn().await;
+        let mut rows = conn.query(&sql, Params::Positional(params)).await?;
+        let seq = match rows.next().await? {
+            Some(row) => match row.get_value(0)? {
+                Value::Integer(i) => i,
+                _ => return Ok(None),
+            },
+            None => return Ok(None),
+        };
+        drop(rows);
+        drop(conn);
+        let merged = self.srv_record_patch(board_id, seq, ops).await?;
+        Ok(Some(merged))
+    }
+
+    /// Apply a list of `(filter, patch)` steps atomically: all succeed or none
+    /// are written. Runs under a single BEGIN IMMEDIATE transaction on the
+    /// board's write lock. Returns the seqs of records actually patched.
+    pub async fn srv_record_patch_many(
+        &self,
+        board_id: &str,
+        steps: &[(Vec<FilterCond>, serde_json::Value)],
+    ) -> anyhow::Result<Vec<i64>> {
+        let ttl = self.srv_ttl_get(board_id).await?;
+        let mut conn = self.conn().await;
+        let tx = conn
+            .transaction_with_behavior(turso::transaction::TransactionBehavior::Immediate)
+            .await?;
+        let mut patched = Vec::new();
+        for (conds, ops) in steps {
+            let (where_sql, mut params, _) = srv_filter_where(board_id, conds);
+            let where_sql = match crate::ttl::ttl_frag(&ttl, &mut params) {
+                Some(frag) => format!("NOT ({frag}) AND {where_sql}"),
+                None => where_sql,
+            };
+            let sel_sql = format!("SELECT seq, payload FROM wb_records WHERE {where_sql} ORDER BY seq ASC LIMIT 1");
+            let mut rows = tx.query(&sel_sql, Params::Positional(params.clone())).await?;
+            let Some(row) = rows.next().await? else { continue };
+            let seq = match row.get_value(0)? {
+                Value::Integer(i) => i,
+                _ => continue,
+            };
+            let current: serde_json::Value = match row.get_value(1)? {
+                Value::Text(s) => serde_json::from_str(&s)?,
+                _ => continue,
+            };
+            let mut merged = current;
+            match ops {
+                serde_json::Value::Object(map) => {
+                    let has_dollar = map.keys().any(|k| k.starts_with('$'));
+                    if has_dollar {
+                        apply_patch_ops(&mut merged, ops)?;
+                    } else {
+                        for (k, v) in map {
+                            merged[k.as_str()] = v.clone();
+                        }
+                    }
+                }
+                other => anyhow::bail!("patch must be a JSON object, got {}", serde_json::to_string(other)?),
+            }
+            let t = sq(&serde_json::to_string(&merged)?);
+            let b = sq(board_id);
+            tx.execute(
+                &format!("UPDATE wb_records SET payload = '{t}' WHERE board_id = '{b}' AND seq = {seq}"),
+                Params::Positional(vec![]),
+            )
+            .await?;
+            patched.push(seq);
+        }
+        tx.commit().await?;
+        drop(conn);
+        Ok(patched)
+    }
 }
 
 fn scalar_string(v: &serde_json::Value) -> String {

@@ -1,5 +1,5 @@
 use crate::context::EventContext;
-use crate::secrets::{Secrets, substitute_value};
+use crate::secrets::{Secrets, substitute_event};
 use serde_json::{Map, Value};
 use zw_expr::ast::Expr;
 use zw_expr::path::parse_path;
@@ -16,6 +16,8 @@ pub enum ActionKind {
     Sort,
     Slice,
     UpsertOther,
+    PatchOther,
+    Transaction,
     Notify,
     Call,
     Schedule,
@@ -36,6 +38,8 @@ impl ActionKind {
             "$sort" => ActionKind::Sort,
             "$slice" => ActionKind::Slice,
             "$upsert_other" => ActionKind::UpsertOther,
+            "$patch_other" => ActionKind::PatchOther,
+            "$transaction" => ActionKind::Transaction,
             "$notify" => ActionKind::Notify,
             "$call" => ActionKind::Call,
             "$schedule" => ActionKind::Schedule,
@@ -284,8 +288,17 @@ pub fn apply_action(
     payload: &mut Value,
     secrets: &Secrets,
     report: &mut RunReport,
-    _ctx: &EventContext,
+    ctx: &EventContext,
 ) -> anyhow::Result<()> {
+    if *kind == ActionKind::Transaction {
+        if !action.is_array() {
+            anyhow::bail!("$transaction must be an array of {{filter, patch}} steps");
+        }
+        let substituted = substitute_event(secrets, ctx, action)?;
+        report.external.push(substituted);
+        report.push(kind, "queued transaction");
+        return Ok(());
+    }
     let map = obj_arg(match kind {
         ActionKind::Log => "$log",
         other => name_for(other),
@@ -406,10 +419,12 @@ pub fn apply_action(
             report.actions_run.push(format!("$log {rendered}"));
         }
         ActionKind::UpsertOther
+        | ActionKind::PatchOther
+        | ActionKind::Transaction
         | ActionKind::Notify
         | ActionKind::Call
         | ActionKind::Schedule => {
-            let substituted = substitute_value(secrets, action);
+            let substituted = substitute_event(secrets, ctx, action)?;
             report.external.push(substituted);
             report.push(kind, "queued external action");
         }
@@ -429,6 +444,8 @@ fn name_for(kind: &ActionKind) -> &'static str {
         ActionKind::Sort => "$sort",
         ActionKind::Slice => "$slice",
         ActionKind::UpsertOther => "$upsert_other",
+        ActionKind::PatchOther => "$patch_other",
+        ActionKind::Transaction => "$transaction",
         ActionKind::Notify => "$notify",
         ActionKind::Call => "$call",
         ActionKind::Schedule => "$schedule",
