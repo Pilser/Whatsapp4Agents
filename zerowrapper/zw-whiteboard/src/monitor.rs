@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use sha2::{Digest, Sha256};
+
 use crate::ParsedBoard;
 
 #[derive(Default)]
@@ -12,25 +14,31 @@ pub struct MonitorCore {
 
 #[derive(Debug, Clone)]
 pub struct FileSnapshot {
-    pub mtime: Option<std::time::SystemTime>,
-    pub size: u64,
+    pub hash: String,
 }
 
 impl MonitorCore {
+    /// Hash the file contents (sha256). An empty hash means the file is absent
+    /// or unreadable, which is treated as a distinct state from any real content.
     pub fn snapshot(&self, path: &Path) -> FileSnapshot {
-        match std::fs::metadata(path) {
-            Ok(meta) => FileSnapshot {
-                mtime: meta.modified().ok(),
-                size: meta.len(),
-            },
-            Err(_) => FileSnapshot { mtime: None, size: 0 },
-        }
+        let hash = match std::fs::read(path) {
+            Ok(bytes) => {
+                let mut h = Sha256::new();
+                h.update(&bytes);
+                format!("{:x}", h.finalize())
+            }
+            Err(_) => String::new(),
+        };
+        FileSnapshot { hash }
     }
 
+    /// Returns true when the file's content hash differs from the last seen snapshot,
+    /// updating `seen` on change. Content hashing avoids missing edits that happen to
+    /// preserve mtime/size (e.g. `cp --preserve`, restores, same-length rewrites).
     pub fn has_changed(&mut self, sid: &str, path: &Path) -> bool {
         let current = self.snapshot(path);
         let changed = match self.seen.get(sid) {
-            Some(prev) => prev.mtime != current.mtime || prev.size != current.size,
+            Some(prev) => prev.hash != current.hash,
             None => true,
         };
         if changed {

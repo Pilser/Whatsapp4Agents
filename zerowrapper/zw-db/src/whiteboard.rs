@@ -15,12 +15,8 @@ pub struct WbPage {
 pub struct WbMeta {
     pub active_page: Option<i64>,
     pub locked: bool,
-    pub locked_at: Option<String>,
     pub rev: i64,
 }
-
-/// A lock is considered live (not safe to steal) for this many seconds after it was taken.
-pub const LOCK_TTL_SECS: i64 = 900;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PublicSnap {
@@ -49,11 +45,7 @@ async fn read_meta(rows: &mut turso::Rows) -> anyhow::Result<Option<WbMeta>> {
             Value::Integer(i) => i,
             _ => 0,
         };
-        let locked_at = match row.get_value(3)? {
-            Value::Text(s) => Some(s),
-            _ => None,
-        };
-        Ok(Some(WbMeta { active_page, locked, locked_at, rev }))
+        Ok(Some(WbMeta { active_page, locked, rev }))
     } else {
         Ok(None)
     }
@@ -105,14 +97,13 @@ impl DbPool {
         }
         let mut meta_rows = conn
             .query(
-                "SELECT active_page, locked, rev, locked_at FROM whiteboard_meta WHERE session_id = ?1",
+                "SELECT active_page, locked, rev FROM whiteboard_meta WHERE session_id = ?1",
                 Params::Positional(vec![Value::from(sid)]),
             )
             .await?;
         let meta = read_meta(&mut meta_rows).await?.unwrap_or(WbMeta {
             active_page: None,
             locked: false,
-            locked_at: None,
             rev: 0,
         });
         Ok((pages, meta))
@@ -134,7 +125,6 @@ impl DbPool {
     }
 
     pub async fn wb_add_page(&self, sid: &str, title: &str) -> anyhow::Result<i64> {
-        self.wb_ensure_session(sid).await?;
         let conn = self.conn().await;
         let mut rows = conn
             .query(
@@ -257,59 +247,21 @@ impl DbPool {
     }
 
     pub async fn wb_open(&self, sid: &str, page_no: i64) -> anyhow::Result<()> {
-        self.wb_ensure_session(sid).await?;
         let conn = self.conn().await;
-        let mut rows = conn
-            .query(
-                "SELECT active_page, locked_at FROM whiteboard_meta WHERE session_id = ?1 AND locked = 1 AND locked_at > datetime('now', ?2)",
-                Params::Positional(vec![Value::from(sid), Value::from(format!("-{} seconds", LOCK_TTL_SECS))]),
-            )
-            .await?;
-        if let Some(row) = rows.next().await? {
-            let ap = match row.get_value(0)? {
-                Value::Integer(i) => i,
-                _ => 0,
-            };
-            let ts = match row.get_value(1)? {
-                Value::Text(s) => s,
-                _ => String::new(),
-            };
-            return Err(anyhow::anyhow!(
-                "page {ap} is locked (opened at {ts}) and not stale; close it first: wb --session {sid} close"
-            ));
-        }
         conn.execute(
-            "UPDATE whiteboard_meta SET active_page = ?1, locked = 1, locked_at = datetime('now'), rev = rev + 1, updated_at = datetime('now') WHERE session_id = ?2",
+            "UPDATE whiteboard_meta SET active_page = ?1, locked = 1, rev = rev + 1, updated_at = datetime('now') WHERE session_id = ?2",
             Params::Positional(vec![Value::Integer(page_no), Value::from(sid)]),
         ).await?;
-        let after = self.wb_state(sid).await?;
-        if !after.1.locked {
-            return Err(anyhow::anyhow!("failed to acquire lock for session {sid}"));
-        }
         Ok(())
     }
 
     pub async fn wb_close(&self, sid: &str) -> anyhow::Result<()> {
-        self.wb_ensure_session(sid).await?;
         let conn = self.conn().await;
         conn.execute(
-            "UPDATE whiteboard_meta SET locked = 0, active_page = NULL, locked_at = NULL, rev = rev + 1, updated_at = datetime('now') WHERE session_id = ?1",
+            "UPDATE whiteboard_meta SET locked = 0, rev = rev + 1, updated_at = datetime('now') WHERE session_id = ?1",
             Params::Positional(vec![Value::from(sid)]),
         ).await?;
         Ok(())
-    }
-
-    /// Clears locks older than `ttl_secs` so a crashed agent cannot leave a page permanently locked.
-    pub async fn wb_reap_stale_locks(&self, ttl_secs: i64) -> anyhow::Result<u64> {
-        let conn = self.conn().await;
-        let n = conn
-            .execute(
-                "UPDATE whiteboard_meta SET locked = 0, active_page = NULL, locked_at = NULL, rev = rev + 1, updated_at = datetime('now') \
-                 WHERE locked = 1 AND locked_at IS NOT NULL AND locked_at < datetime('now', ?1)",
-                Params::Positional(vec![Value::from(format!("-{} seconds", ttl_secs))]),
-            )
-            .await?;
-        Ok(n)
     }
 
     pub async fn wb_set_public(&self, sid: &str, page_no: i64, public: bool) -> anyhow::Result<Option<String>> {

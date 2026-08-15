@@ -4,6 +4,7 @@ pub fn verb_help(group: &str, verb: &str) -> Option<&'static str> {
         ("apps", "list") => Some(APPS_LIST),
         ("apps", "show") => Some(APPS_SHOW),
         ("apps", "schema") => Some(APPS_SCHEMA),
+        ("apps", "find") => Some("srv apps find <board_id>\n\nlooks up who owns a board and the session to reach it: returns owner_session, owner_key and public_reads, plus a hint to retry with --session <owner>"),
         ("apps", "update") => Some(APPS_UPDATE),
         ("apps", "delete") => Some(APPS_DELETE),
         ("apps", "export") => Some(APPS_EXPORT),

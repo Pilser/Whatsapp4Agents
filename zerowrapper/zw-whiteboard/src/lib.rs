@@ -9,8 +9,6 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
-use zw_db::whiteboard::LOCK_TTL_SECS;
-
 use crate::monitor::MonitorCore;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -110,9 +108,6 @@ impl WhiteboardHandle {
                 };
                 for sid in sessions {
                     if let Some(store) = &db {
-                        if let Ok(pool) = store.session(&sid).await {
-                            let _ = pool.wb_reap_stale_locks(LOCK_TTL_SECS).await;
-                        }
                         poll_with_db(store, &dir, &cache, &state, &tx, &sid).await;
                     } else {
                         poll_without_db(&dir, &cache, &state, &tx, &sid).await;
@@ -129,6 +124,7 @@ impl WhiteboardHandle {
     pub async fn open(&self, sid: &str, page_no: i64) -> anyhow::Result<()> {
         let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
         let pool = store.session(sid).await?;
+        pool.wb_ensure_session(sid).await?;
         pool.wb_open(sid, page_no).await?;
         let (pages, _) = pool.wb_state(sid).await?;
         let body = pages
@@ -151,7 +147,27 @@ impl WhiteboardHandle {
     pub async fn close(&self, sid: &str) -> anyhow::Result<()> {
         let store = self.db.as_ref().ok_or_else(|| anyhow::anyhow!("whiteboard db not configured"))?;
         let pool = store.session(sid).await?;
+        let (pages, meta) = pool.wb_state(sid).await?;
         pool.wb_close(sid).await?;
+        // Flush the active page's file content to DB on close so an edit is never
+        // lost if the next poll/process doesn't run (e.g. a restart right after close).
+        if let Some(active) = meta.active_page {
+            if let Ok(raw) = std::fs::read_to_string(session_path(&self.dir, sid)) {
+                let title = pages
+                    .iter()
+                    .find(|p| p.page_no == active)
+                    .map(|p| p.title.clone())
+                    .unwrap_or_default();
+                let _ = pool.wb_write_page(sid, active, &title, &raw).await;
+            }
+        }
+        let path = session_path(&self.dir, sid);
+        let snapshot = {
+            let core = self.state.lock().await;
+            core.snapshot(&path)
+        };
+        let mut core = self.state.lock().await;
+        core.seen.insert(sid.to_string(), snapshot);
         Ok(())
     }
 
@@ -333,10 +349,24 @@ async fn poll_with_db(
         let mut core = state.lock().await;
         match store.session(sid).await {
             Ok(pool) => match pool.wb_state(sid).await {
-                Ok((_, meta)) => {
+                Ok((pages, meta)) => {
                     let changed = core.rev.get(sid) != Some(&meta.rev);
                     if changed {
                         core.rev.insert(sid.to_string(), meta.rev);
+                        // DB -> file: keep the .wb mirror current when the agent isn't
+                        // actively editing it (page closed), so the file never resists DB changes.
+                        if !meta.locked {
+                            if let Some(active) = meta.active_page {
+                                if let Some(page) = pages.iter().find(|p| p.page_no == active) {
+                                    let path = session_path(dir, sid);
+                                    if std::fs::write(&path, &page.body_md).is_ok() {
+                                        set_world_writable(&path);
+                                        let snap = core.snapshot(&path);
+                                        core.seen.insert(sid.to_string(), snap);
+                                    }
+                                }
+                            }
+                        }
                     }
                     changed
                 }

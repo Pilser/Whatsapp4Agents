@@ -73,8 +73,7 @@ const USAGE: &str =
 type CmdResult = Result<Value, Value>;
 
 const APPS_USAGE: &str =
-     "srv apps <verb> [args]\n\
-     find <board_id>  (shows owner + how to reach it, even from another session)\n\
+    "srv apps <verb> [args]\n\
      create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
      list\n\
      show <board_id>\n\
@@ -242,33 +241,41 @@ fn public_mode(args: &[&String], raw: &str, verb: &str) -> Result<bool, Value> {
     }
 }
 
-async fn require_board(store: &SessionStore, board_id: &str, sid: &str, raw: &str) -> Result<(SrvApp, Arc<DbPool>), Value> {
+async fn require_board(store: &SessionStore, board_id: &str, sid: &str, raw: &str, read: bool) -> Result<(SrvApp, Arc<DbPool>), Value> {
     let pool = store
         .board_pool(board_id)
         .await
         .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?;
-    let app = match pool
+    if let Some(app) = pool
         .srv_app_owned(board_id, sid)
         .await
         .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?
     {
-        Some(a) => a,
-        None => {
-            let owner = pool.srv_app_by_id(board_id).await.ok().flatten().map(|a| a.owner_key);
-            let (error, hint) = match owner {
-                Some(o) => (
-                    format!("board {board_id} is owned by {o}"),
-                    format!("retry with --session {o}"),
-                ),
-                None => (
-                    format!("board {board_id} not found"),
-                    "check the board id".to_string(),
-                ),
-            };
-            return Err(err_json(&error, raw, "srv <group> <verb>", &hint));
+        return Ok((app, pool));
+    }
+    // Not owned by this session. Public boards may be read cross-session.
+    if read {
+        if let Ok(Some(app)) = pool.srv_app_by_id(board_id).await {
+            if app.public_reads {
+                return Ok((app, pool));
+            }
         }
+    }
+    let owner = store
+        .session_id_for_board(board_id)
+        .await
+        .ok()
+        .filter(|o| o.as_str() != sid);
+    let msg = match owner {
+        Some(o) => format!("board {board_id} is owned by session {o} — retry with --session {o}"),
+        None => format!("board {board_id} not found or not owned"),
     };
-    Ok((app, pool))
+    Err(err_json(
+        &msg,
+        raw,
+        "srv <group> <verb>",
+        "srv apps list",
+    ))
 }
 
 /// Shared handler for `srv apps computed|validate|redact <board_id> [json|--clear]`.
@@ -283,7 +290,7 @@ async fn config_verb(store: &SessionStore, args: &[&String], sid: &str, raw: &st
             &format!("srv apps {kind} <board_id> '{{\"total\":\"$.price * $.qty\"}}'"),
         )
     })?;
-    let (app, pool) = require_board(store, board_id, sid, raw).await?;
+    let (app, pool) = require_board(store, board_id, sid, raw, false).await?;
     let rest = &args[1..];
     if has_flag(rest, "--clear") {
         let set = match kind {
@@ -334,34 +341,6 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
         ));
     }
     match verb {
-        "find" => {
-            let board_id = args.first().ok_or_else(|| {
-                err_json("missing <board_id>", raw, "srv apps find <board_id>", "srv apps find b_xxx")
-            })?;
-            let pool = store
-                .board_pool(board_id)
-                .await
-                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find <board_id>", "srv apps find b_xxx"))?;
-            let app = pool
-                .srv_app_by_id(board_id)
-                .await
-                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find <board_id>", "srv apps find b_xxx"))?;
-            match app {
-                Some(a) => Ok(json!({
-                    "status": "ok",
-                    "board_id": a.board_id,
-                    "title": a.title,
-                    "owned_by": a.owner_key,
-                    "hint": format!("retry with --session {}", a.owner_key),
-                })),
-                None => Err(err_json(
-                    &format!("board {board_id} not found"),
-                    raw,
-                    "srv apps find <board_id>",
-                    "srv apps find b_xxx",
-                )),
-            }
-        }
         "create" => {
             let title = joined_flag(args, "--title").unwrap_or_else(|| "Untitled".to_string());
             let schema = joined_flag(args, "--json");
@@ -382,25 +361,52 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps show <board_id>", "srv apps show <board_id>")
             })?;
-            let (app, _pool) = require_board(store, board_id, sid, raw).await?;
+            let (app, _pool) = require_board(store, board_id, sid, raw, true).await?;
             Ok(json!({ "status": "ok", "app": app }))
         }
         "schema" => {
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps schema <board_id>", "srv apps schema <board_id>")
             })?;
-            let (app, _pool) = require_board(store, board_id, sid, raw).await?;
+            let (app, _pool) = require_board(store, board_id, sid, raw, true).await?;
             Ok(json!({
                 "status": "ok",
                 "board_id": app.board_id,
                 "schema": app.schema_json,
             }))
         }
+        "find" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps find <board_id>", "srv apps find <board_id>")
+            })?;
+            let owner = store
+                .session_id_for_board(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find", "srv apps find <board_id>"))?;
+            let pool = store
+                .session(&owner)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find", "srv apps find <board_id>"))?;
+            let app = pool
+                .srv_app_by_id(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find", "srv apps find <board_id>"))?
+                .ok_or_else(|| err_json(&format!("board {board_id} not found"), raw, "srv apps find", "srv apps find <board_id>"))?;
+            Ok(json!({
+                "status": "ok",
+                "board_id": app.board_id,
+                "title": app.title,
+                "owner_session": owner,
+                "owner_key": app.owner_key,
+                "public_reads": app.public_reads,
+                "hint": format!("retry with --session {owner}"),
+            }))
+        }
         "update" => {
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps update <board_id>", "srv apps update <board_id>")
             })?;
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             let title = joined_flag(args, "--title");
             let schema: Option<Option<String>> = if has_flag(args, "--clear-schema") {
                 Some(None)
@@ -445,7 +451,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps delete <board_id>", "srv apps delete <board_id>")
             })?;
-            require_board(store, board_id, sid, raw).await?;
+            require_board(store, board_id, sid, raw, false).await?;
             store.delete_board(sid, board_id)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv apps delete", "srv apps delete <board_id>"))?;
@@ -455,7 +461,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps export <board_id> [--out <path>]", "srv apps export <board_id>")
             })?;
-            let (app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (app, pool) = require_board(store, board_id, sid, raw, true).await?;
             let rate = pool
                 .srv_rate_config(board_id)
                 .await
@@ -663,7 +669,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
             })?;
             let sub = args.get(1).map(|s| s.as_str()).unwrap_or("");
             let rest = &args[2..];
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             match sub {
                 "register" => {
                     let url = rest.first().ok_or_else(|| {
@@ -726,7 +732,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                     "srv apps rate <board_id> '{\"submit\":60}'",
                 )
             })?;
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             if has_flag(args, "--clear") {
                 pool.srv_rate_set(board_id, sid, None)
                     .await
@@ -774,7 +780,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                     "srv apps ttl <board_id> 3600 --ttl-until '$.expires_at'",
                 )
             })?;
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             if has_flag(args, "--clear") {
                 pool.srv_ttl_set(board_id, sid, None, None)
                     .await
@@ -813,7 +819,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
             let board_id = args.first().ok_or_else(|| {
                 err_json("missing <board_id>", raw, "srv apps link <board_id> --on '$.k' --to <parent> --via '$.k'", "srv apps link <child> --on '$.sku' --to <parent> --via '$.sku'")
             })?;
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             if has_flag(args, "--clear") {
                 pool.srv_link_clear(board_id, sid)
                     .await
@@ -852,7 +858,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                 err_json("missing <board_id>", raw, "srv apps audit <board_id>", "srv apps audit <board_id> on")
             })?;
             let on_off = args.get(1).map(|s| s.as_str()).unwrap_or_default();
-            let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+            let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
             let enabled = match on_off {
                 "on" | "1" | "true" => true,
                 "off" | "0" | "false" => false,
@@ -886,7 +892,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                     let action = joined_flag(rest, "--action").filter(|a| !a.is_empty()).ok_or_else(|| {
                         err_json("missing --action '<json>'", raw, "srv apps jobs <board_id> add", "srv apps jobs <board_id> add --action '{\"type\":\"poll\",\"url\":\"https://api.example.com/x\",\"path\":\"$.data\"}'")
                     })?;
-                    require_board(store, board_id, sid, raw).await?;
+                    require_board(store, board_id, sid, raw, false).await?;
                     let (id, next_run_at) = store
                         .system()
                         .srv_job_add(board_id, &name, &schedule, &action)
@@ -895,7 +901,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                     Ok(json!({ "status": "ok", "job_id": id, "schedule": schedule, "next_run_at": next_run_at }))
                 }
                 "list" => {
-                    require_board(store, board_id, sid, raw).await?;
+                    require_board(store, board_id, sid, raw, false).await?;
                     let jobs = store
                         .system()
                         .srv_job_list(Some(board_id))
@@ -908,7 +914,7 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                         .first()
                         .and_then(|v| v.parse().ok())
                         .ok_or_else(|| err_json("missing <job_id>", raw, "srv apps jobs <board_id> remove <job_id>", "srv apps jobs <board_id> remove 3"))?;
-                    require_board(store, board_id, sid, raw).await?;
+                    require_board(store, board_id, sid, raw, false).await?;
                     let removed = store
                         .system()
                         .srv_job_remove(id)
@@ -954,7 +960,8 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv records <verb>", "srv records list"))?;
-    let (app, pool) = require_board(store, board_id, sid, raw).await?;
+    let read = matches!(verb, "list" | "get" | "query" | "search" | "count" | "aggregate");
+    let (app, pool) = require_board(store, board_id, sid, raw, read).await?;
     let rest = &args[1..];
     match verb {
         "audit" => cmd_audit_records(&pool, board_id, &app.owner_key, rest, raw).await,
@@ -1314,7 +1321,8 @@ async fn cmd_recipes(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv recipes <verb>", "srv recipes list <board_id>"))?;
-    let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+    let read = verb == "list";
+    let (_app, pool) = require_board(store, board_id, sid, raw, read).await?;
     let rest = &args[1..];
     match verb {
         "list" => {
@@ -1390,7 +1398,7 @@ async fn cmd_secrets(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv secrets <verb>", "srv secrets list <board_id>"))?;
-    let (_app, pool) = require_board(store, board_id, sid, raw).await?;
+    let (_app, pool) = require_board(store, board_id, sid, raw, false).await?;
     let rest = &args[1..];
     match verb {
         "set" => {
@@ -1449,7 +1457,7 @@ async fn cmd_files(store: &SessionStore, dir: &Path, sid: &str, verb: &str, args
     let board_id = args
         .first()
         .ok_or_else(|| err_json("missing <board_id>", raw, "srv files <verb>", "srv files list"))?;
-    require_board(store, board_id, sid, raw).await?;
+    require_board(store, board_id, sid, raw, true).await?;
     let rest = &args[1..];
     match verb {
         "list" => {

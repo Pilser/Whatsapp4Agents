@@ -99,7 +99,6 @@ CREATE TABLE IF NOT EXISTS whiteboard_meta (
     session_id  TEXT PRIMARY KEY,
     active_page INTEGER,
     locked      INTEGER NOT NULL DEFAULT 0,
-    locked_at   TEXT,
     rev         INTEGER NOT NULL DEFAULT 0,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -219,5 +218,4 @@ pub const SESSION_MIGRATIONS: &[&str] = &[
     "ALTER TABLE wb_apps ADD COLUMN validate_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN redact_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN webhook_secret TEXT;",
-    "ALTER TABLE whiteboard_meta ADD COLUMN locked_at TEXT;",
 ];
