@@ -217,10 +217,24 @@ pub fn parse_filter(v: &JVal) -> anyhow::Result<SrvFilter> {
         }
         JVal::Object(obj) => {
             for (field, ops) in obj {
+                if field == "$and" {
+                    let arr = ops
+                        .as_array()
+                        .ok_or_else(|| anyhow::anyhow!("\"$and\" needs an array of condition objects"))?;
+                    for el in arr {
+                        conds.extend(parse_filter(el)?.conds);
+                    }
+                    continue;
+                }
+                if field == "$or" {
+                    anyhow::bail!(
+                        "operator \"$or\" is not supported yet (use multiple top-level keys for implicit AND, or request $or support)"
+                    );
+                }
                 push_ops(&mut conds, field, ops)?;
             }
         }
-        _ => anyhow::bail!("filter must be a condition object, a {{field: op}} map, or an array of conditions"),
+        _ => anyhow::bail!("filter must be a condition object, a {{field: op}} map, an array of conditions, or {{\"$and\":[...]}}"),
     }
     Ok(SrvFilter { conds })
 }
