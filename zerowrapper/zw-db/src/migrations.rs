@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS app_jobs (
 CREATE INDEX IF NOT EXISTS idx_app_jobs_board ON app_jobs(board_id);
 CREATE INDEX IF NOT EXISTS idx_app_jobs_next ON app_jobs(next_run_at);
 
+CREATE TABLE IF NOT EXISTS wb_job_runs (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id     TEXT NOT NULL,
+    job_id       INTEGER NOT NULL,
+    job_name     TEXT NOT NULL,
+    triggered_at TEXT NOT NULL,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL,
+    message      TEXT NOT NULL DEFAULT '',
+    result       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wb_job_runs_board ON wb_job_runs(board_id, job_id, id);
+
 CREATE TABLE IF NOT EXISTS wb_public_index (
     slug       TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -186,6 +199,17 @@ CREATE TABLE IF NOT EXISTS wb_recipe_runs (
     ran_at       TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (board_id, recipe, dedup_key)
 );
+
+CREATE TABLE IF NOT EXISTS wb_recipe_runs_log (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    board_id     TEXT NOT NULL,
+    recipe       TEXT NOT NULL,
+    triggered_at TEXT NOT NULL,
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    status       TEXT NOT NULL,
+    message      TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_wb_recipe_runs_log_board ON wb_recipe_runs_log(board_id, recipe, id);
 
 CREATE TABLE IF NOT EXISTS wb_app_secrets (
     board_id   TEXT NOT NULL,

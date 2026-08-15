@@ -124,6 +124,7 @@ sub-verbs:\n\
                resulting object as a NEW record on this board (writer = job name).\n\
                This is how an app 'listens' to an external API on a schedule.\n\
   list                show the board's jobs (id, name, schedule, next_run_at, last_run status)\n\
+  runs [<job_id>] [--limit N]   show the run history of all jobs, or one job by id (newest first)\n\
   remove <job_id>     delete a job by its numeric id\n\
 examples:\n\
   srv apps jobs <board_id> add --name refresh --schedule '@every 5m' --action '{\"type\":\"http\",\"url\":\"https://api.example.com/ping\"}'\n\
@@ -353,7 +354,10 @@ example: srv apps redact <board_id> '[\"$.ssn\",\"$.card.number\"]'\n";
 const RECIPES_LIST: &str = "\
 srv recipes list <board_id>\n\
 \n\
-lists the board's recipes (id, name, when, match, enabled, dedup, actions).\n";
+lists the board's recipes (id, name, when, match, enabled, dedup, actions).\n\
+\n\
+other sub-verbs:\n\
+  runs [<name>] [--limit N]   show the run history of all recipes, or one by name (newest first)\n";
 
 const RECIPES_ADD: &str = "\
 srv recipes add <board_id> --name <n> --when '<event>' [--match '<json>'] [--dedup '<$.path>'] [--actions '<json>']\n\

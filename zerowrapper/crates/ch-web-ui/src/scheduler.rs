@@ -35,18 +35,24 @@ fn extract_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(cur)
 }
 
-async fn mark(store: &SessionStore, job: &SrvJob, now: &NaiveDateTime, status: &str, message: &str) {
-    if let Err(e) = store
-        .system()
-        .srv_job_mark(job.id, &fmt_iso(now), status, message)
+async fn mark(store: &SessionStore, job: &SrvJob, now: &NaiveDateTime, started: &std::time::Instant, status: &str, message: &str) {
+    let duration_ms = started.elapsed().as_millis() as i64;
+    let iso = fmt_iso(now);
+    let system = store.system();
+    if let Err(e) = system.srv_job_mark(job.id, &iso, status, message).await {
+        tracing::warn!("scheduler: mark job {} failed: {e}", job.id);
+    }
+    if let Err(e) = system
+        .srv_job_run_insert(&job.board_id, job.id, &job.name, &iso, duration_ms, status, message, "")
         .await
     {
-        tracing::warn!("scheduler: mark job {} failed: {e}", job.id);
+        tracing::warn!("scheduler: record job run {} failed: {e}", job.id);
     }
 }
 
 async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
     let now = Utc::now().naive_utc();
+    let started = std::time::Instant::now();
     let next = next_run(&job.schedule, now);
     if let Err(e) = store
         .system()
@@ -61,17 +67,17 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
     let action: Value = match serde_json::from_str(&job.action) {
         Ok(v) => v,
         Err(e) => {
-            mark(store, &job, &now, "error", &format!("invalid action json: {e}")).await;
+            mark(store, &job, &now, &started, "error", &format!("invalid action json: {e}")).await;
             return;
         }
     };
     let kind = action.get("type").and_then(|t| t.as_str()).unwrap_or("http");
     let Some(url) = action.get("url").and_then(|u| u.as_str()) else {
-        mark(store, &job, &now, "error", "missing action url").await;
+        mark(store, &job, &now, &started, "error", "missing action url").await;
         return;
     };
     if !zw_db::netguard::valid_url(url) {
-        mark(store, &job, &now, "error", "ssrf-blocked url").await;
+        mark(store, &job, &now, &started, "error", "ssrf-blocked url").await;
         return;
     }
     let method = action.get("method").and_then(|m| m.as_str()).unwrap_or("GET");
@@ -102,7 +108,7 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
     let res = match req.timeout(StdDuration::from_millis(timeout_ms)).send().await {
         Ok(r) => r,
         Err(e) => {
-            mark(store, &job, &now, "error", &format!("request failed: {e}")).await;
+            mark(store, &job, &now, &started, "error", &format!("request failed: {e}")).await;
             return;
         }
     };
@@ -110,7 +116,7 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
     let text = match res.text().await {
         Ok(t) => t,
         Err(e) => {
-            mark(store, &job, &now, "error", &format!("read body failed: {e}")).await;
+            mark(store, &job, &now, &started, "error", &format!("read body failed: {e}")).await;
             return;
         }
     };
@@ -122,16 +128,16 @@ async fn run_job(store: &SessionStore, client: &reqwest::Client, job: SrvJob) {
         if record.is_object() {
             match store.board_pool(&job.board_id).await {
                 Ok(pool) => match pool.srv_record_insert(&job.board_id, &record, Some(&job.name), false).await {
-                    Ok(seq) => mark(store, &job, &now, "ok", &format!("http {status}, inserted seq {seq}")).await,
-                    Err(e) => mark(store, &job, &now, "error", &format!("http {status}, insert failed: {e}")).await,
+                    Ok(seq) => mark(store, &job, &now, &started, "ok", &format!("http {status}, inserted seq {seq}")).await,
+                    Err(e) => mark(store, &job, &now, &started, "error", &format!("http {status}, insert failed: {e}")).await,
                 },
-                Err(e) => mark(store, &job, &now, "error", &format!("http {status}, board lookup failed: {e}")).await,
+                Err(e) => mark(store, &job, &now, &started, "error", &format!("http {status}, board lookup failed: {e}")).await,
             }
         } else {
-            mark(store, &job, &now, "ok", &format!("http {status}, path '{path}' did not yield an object")).await;
+            mark(store, &job, &now, &started, "ok", &format!("http {status}, path '{path}' did not yield an object")).await;
         }
     } else {
-        mark(store, &job, &now, "ok", &format!("http {status}")).await;
+        mark(store, &job, &now, &started, "ok", &format!("http {status}")).await;
     }
 }
 

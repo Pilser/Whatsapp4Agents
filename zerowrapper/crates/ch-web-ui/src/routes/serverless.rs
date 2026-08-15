@@ -254,8 +254,8 @@ fn force_scope(payload: &mut serde_json::Value, scope: &str) {
 }
 
 fn bearer_token(cx: &Cx) -> Option<String> {
-    let auth = headers(cx).get("Authorization").and_then(|v| v.to_str().ok());
-    let token = auth.and_then(|s| {
+    let headers = headers(cx);
+    if let Some(token) = headers.get("Authorization").and_then(|v| v.to_str().ok()).and_then(|s| {
         let mut parts = s.splitn(2, ' ');
         if parts.next()?.eq_ignore_ascii_case("bearer") {
             let rest = parts.next()?.trim();
@@ -267,13 +267,34 @@ fn bearer_token(cx: &Cx) -> Option<String> {
         } else {
             None
         }
-    });
-    token.or_else(|| {
-        query_params(cx)
-            .get("key")
-            .map(|k| k.to_string())
-            .filter(|k| !k.is_empty())
-    })
+    }) {
+        return Some(token);
+    }
+    if let Some(token) = headers
+        .get("Sec-WebSocket-Protocol")
+        .and_then(|v| v.to_str().ok())
+        .and_then(ws_subprotocol_key)
+    {
+        return Some(token);
+    }
+    query_params(cx)
+        .get("key")
+        .map(|k| k.to_string())
+        .filter(|k| !k.is_empty())
+}
+
+fn ws_subprotocol_key(proto: &str) -> Option<String> {
+    let mut parts = proto.split(',').map(str::trim);
+    while let Some(p) = parts.next() {
+        if p.eq_ignore_ascii_case("bearer") {
+            let key = parts.next()?.trim();
+            if key.is_empty() {
+                return None;
+            }
+            return Some(key.to_string());
+        }
+    }
+    None
 }
 
 fn rate_client_key(cx: &Cx, board_id: &str, token: &Option<String>) -> String {

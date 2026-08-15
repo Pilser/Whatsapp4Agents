@@ -135,4 +135,105 @@ impl DbPool {
         .await?;
         Ok(())
     }
+
+    pub async fn srv_recipe_runs_log_insert(
+        &self,
+        board_id: &str,
+        recipe: &str,
+        triggered_at: &str,
+        duration_ms: i64,
+        status: &str,
+        message: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn().await;
+        let b = sq(board_id);
+        let r = sq(recipe);
+        let t = sq(triggered_at);
+        let st = sq(status);
+        let m = sq(message);
+        let sql = format!(
+            "INSERT INTO wb_recipe_runs_log (board_id, recipe, triggered_at, duration_ms, status, message) \
+             VALUES ('{b}', '{r}', '{t}', {duration_ms}, '{st}', '{m}')"
+        );
+        conn.execute(&sql, Params::Positional(vec![])).await?;
+        Ok(())
+    }
+
+    pub async fn srv_recipe_runs_log(&self, board_id: &str, recipe: Option<&str>, limit: i64) -> anyhow::Result<Vec<RecipeRunLog>> {
+        let conn = self.conn().await;
+        let (sql, params) = match recipe {
+            Some(rn) => (
+                "SELECT id, board_id, recipe, triggered_at, duration_ms, status, message \
+                 FROM wb_recipe_runs_log WHERE board_id = ?1 AND recipe = ?2 ORDER BY id DESC LIMIT ?3"
+                    .to_string(),
+                Params::Positional(vec![Value::from(board_id), Value::from(rn), Value::Integer(limit)]),
+            ),
+            None => (
+                "SELECT id, board_id, recipe, triggered_at, duration_ms, status, message \
+                 FROM wb_recipe_runs_log WHERE board_id = ?1 ORDER BY id DESC LIMIT ?2"
+                    .to_string(),
+                Params::Positional(vec![Value::from(board_id), Value::Integer(limit)]),
+            ),
+        };
+        let mut rows = conn.query(&sql, params).await?;
+        let mut out = Vec::new();
+        while let Some(r) = read_recipe_run_log(&mut rows).await? {
+            out.push(r);
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RecipeRunLog {
+    pub id: i64,
+    pub board_id: String,
+    pub recipe: String,
+    pub triggered_at: String,
+    pub duration_ms: i64,
+    pub status: String,
+    pub message: String,
+}
+
+async fn read_recipe_run_log(rows: &mut turso::Rows) -> anyhow::Result<Option<RecipeRunLog>> {
+    let Some(row) = rows.next().await? else {
+        return Ok(None);
+    };
+    let id = match row.get_value(0)? {
+        Value::Integer(i) => i,
+        _ => 0,
+    };
+    let board_id = match row.get_value(1)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let recipe = match row.get_value(2)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let triggered_at = match row.get_value(3)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let duration_ms = match row.get_value(4)? {
+        Value::Integer(i) => i,
+        _ => 0,
+    };
+    let status = match row.get_value(5)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let message = match row.get_value(6)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    Ok(Some(RecipeRunLog {
+        id,
+        board_id,
+        recipe,
+        triggered_at,
+        duration_ms,
+        status,
+        message,
+    }))
 }

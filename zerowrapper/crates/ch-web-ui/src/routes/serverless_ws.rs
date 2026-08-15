@@ -65,6 +65,7 @@ pub async fn srv_ws(cx: &Cx, upgrade: WebSocketUpgrade) -> Result<Response> {
 
     let store = ctx.db.clone();
     let realtime: Arc<Broker> = ctx.realtime.clone();
+    let upgrade = upgrade.protocols(["bearer"]);
     upgrade.on_upgrade(move |socket| async move {
         handle_srv_ws(socket, board_id, after, filter, allowed, store, realtime).await;
     })

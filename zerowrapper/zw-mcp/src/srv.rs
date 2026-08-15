@@ -909,6 +909,19 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs list", "srv apps jobs <board_id> list"))?;
                     Ok(json!({ "status": "ok", "jobs": jobs }))
                 }
+                "runs" => {
+                    require_board(store, board_id, sid, raw, false).await?;
+                    let job_id = args.get(2).and_then(|v| v.parse::<i64>().ok());
+                    let limit: i64 = joined_flag(rest, "--limit")
+                        .and_then(|n| n.parse().ok())
+                        .unwrap_or(50);
+                    let runs = store
+                        .system()
+                        .srv_job_runs(board_id, job_id, limit)
+                        .await
+                        .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs runs", "srv apps jobs <board_id> runs [<job_id>] [--limit N]"))?;
+                    Ok(json!({ "status": "ok", "runs": runs }))
+                }
                 "remove" => {
                     let id: i64 = rest
                         .first()
@@ -1371,6 +1384,20 @@ async fn cmd_recipes(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv recipes enable", "srv recipes enable <board_id> <name> on"))?;
             Ok(json!({ "status": "ok", "enabled": enabled }))
+        }
+        "runs" => {
+            let recipe = match rest.first() {
+                Some(n) if !n.starts_with("--") => Some(n.clone()),
+                _ => None,
+            };
+            let limit: i64 = joined_flag(rest, "--limit")
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(50);
+            let runs = pool
+                .srv_recipe_runs_log(board_id, recipe.map(|x| x.as_str()), limit)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv recipes runs", "srv recipes <board_id> runs [<name>] [--limit N]"))?;
+            Ok(json!({ "status": "ok", "runs": runs }))
         }
         "remove" => {
             let name = rest

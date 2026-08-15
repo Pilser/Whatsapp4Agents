@@ -44,6 +44,7 @@ impl<'a> Engine<'a> {
         ctx: &EventContext,
         dry_run: bool,
     ) -> RunOutcome {
+        let start = std::time::Instant::now();
         if !recipe.enabled {
             return RunOutcome { matched: false, report: RunReport::default() };
         }
@@ -141,6 +142,23 @@ impl<'a> Engine<'a> {
                     Ok(()) => report.actions_run.push("persisted updated record".to_string()),
                     Err(e) => report.logs.push(format!("persist: {e}")),
                 }
+            }
+        }
+        if !dry_run {
+            let status = if report.logs.iter().any(|l| l.to_lowercase().contains("error")) {
+                "error"
+            } else {
+                "ok"
+            };
+            let message = report.logs.join(" | ");
+            let duration_ms = start.elapsed().as_millis() as i64;
+            let triggered_at = chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S").to_string();
+            if let Err(e) = self
+                .db
+                .srv_recipe_runs_log_insert(&ctx.board_id, &recipe.name, &triggered_at, duration_ms, status, &message)
+                .await
+            {
+                tracing::warn!("recipe run log insert failed: {e}");
             }
         }
         RunOutcome { matched: true, report }

@@ -185,4 +185,120 @@ impl DbPool {
         conn.execute(&sql, Params::Positional(vec![])).await?;
         Ok(())
     }
+
+    pub async fn srv_job_run_insert(
+        &self,
+        board_id: &str,
+        job_id: i64,
+        job_name: &str,
+        triggered_at: &str,
+        duration_ms: i64,
+        status: &str,
+        message: &str,
+        result: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn().await;
+        let b = sq(board_id);
+        let n = sq(job_name);
+        let t = sq(triggered_at);
+        let st = sq(status);
+        let m = sq(message);
+        let r = sq(result);
+        let sql = format!(
+            "INSERT INTO wb_job_runs (board_id, job_id, job_name, triggered_at, duration_ms, status, message, result) \
+             VALUES ('{b}', {job_id}, '{n}', '{t}', {duration_ms}, '{st}', '{m}', '{r}')"
+        );
+        conn.execute(&sql, Params::Positional(vec![])).await?;
+        Ok(())
+    }
+
+    pub async fn srv_job_runs(&self, board_id: &str, job_id: Option<i64>, limit: i64) -> anyhow::Result<Vec<JobRun>> {
+        let conn = self.conn().await;
+        let (sql, params) = match job_id {
+            Some(jid) => (
+                "SELECT id, board_id, job_id, job_name, triggered_at, duration_ms, status, message, result \
+                 FROM wb_job_runs WHERE board_id = ?1 AND job_id = ?2 ORDER BY id DESC LIMIT ?3"
+                    .to_string(),
+                Params::Positional(vec![Value::from(board_id), Value::Integer(jid), Value::Integer(limit)]),
+            ),
+            None => (
+                "SELECT id, board_id, job_id, job_name, triggered_at, duration_ms, status, message, result \
+                 FROM wb_job_runs WHERE board_id = ?1 ORDER BY id DESC LIMIT ?2"
+                    .to_string(),
+                Params::Positional(vec![Value::from(board_id), Value::Integer(limit)]),
+            ),
+        };
+        let mut rows = conn.query(&sql, params).await?;
+        let mut out = Vec::new();
+        while let Some(r) = read_job_run(&mut rows).await? {
+            out.push(r);
+        }
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JobRun {
+    pub id: i64,
+    pub board_id: String,
+    pub job_id: i64,
+    pub job_name: String,
+    pub triggered_at: String,
+    pub duration_ms: i64,
+    pub status: String,
+    pub message: String,
+    pub result: String,
+}
+
+async fn read_job_run(rows: &mut turso::Rows) -> anyhow::Result<Option<JobRun>> {
+    let Some(row) = rows.next().await? else {
+        return Ok(None);
+    };
+    let id = match row.get_value(0)? {
+        Value::Integer(i) => i,
+        _ => 0,
+    };
+    let board_id = match row.get_value(1)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let job_id = match row.get_value(2)? {
+        Value::Integer(i) => i,
+        _ => 0,
+    };
+    let job_name = match row.get_value(3)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let triggered_at = match row.get_value(4)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let duration_ms = match row.get_value(5)? {
+        Value::Integer(i) => i,
+        _ => 0,
+    };
+    let status = match row.get_value(6)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let message = match row.get_value(7)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    let result = match row.get_value(8)? {
+        Value::Text(s) => s,
+        _ => String::new(),
+    };
+    Ok(Some(JobRun {
+        id,
+        board_id,
+        job_id,
+        job_name,
+        triggered_at,
+        duration_ms,
+        status,
+        message,
+        result,
+    }))
 }
