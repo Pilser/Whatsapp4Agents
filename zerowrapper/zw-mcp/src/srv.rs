@@ -73,7 +73,8 @@ const USAGE: &str =
 type CmdResult = Result<Value, Value>;
 
 const APPS_USAGE: &str =
-    "srv apps <verb> [args]\n\
+     "srv apps <verb> [args]\n\
+     find <board_id>  (shows owner + how to reach it, even from another session)\n\
      create --title \"<title>\" [--json <schema>] [--public-reads on|off] [--unique '<$.path>']\n\
      list\n\
      show <board_id>\n\
@@ -246,18 +247,27 @@ async fn require_board(store: &SessionStore, board_id: &str, sid: &str, raw: &st
         .board_pool(board_id)
         .await
         .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?;
-    let app = pool
+    let app = match pool
         .srv_app_owned(board_id, sid)
         .await
         .map_err(|e| err_json(&e.to_string(), raw, "srv <group> <verb>", "srv apps list"))?
-        .ok_or_else(|| {
-            err_json(
-                &format!("board {board_id} not found or not owned"),
-                raw,
-                "srv <group> <verb>",
-                "srv apps list",
-            )
-        })?;
+    {
+        Some(a) => a,
+        None => {
+            let owner = pool.srv_app_by_id(board_id).await.ok().flatten().map(|a| a.owner_key);
+            let (error, hint) = match owner {
+                Some(o) => (
+                    format!("board {board_id} is owned by {o}"),
+                    format!("retry with --session {o}"),
+                ),
+                None => (
+                    format!("board {board_id} not found"),
+                    "check the board id".to_string(),
+                ),
+            };
+            return Err(err_json(&error, raw, "srv <group> <verb>", &hint));
+        }
+    };
     Ok((app, pool))
 }
 
@@ -324,6 +334,34 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
         ));
     }
     match verb {
+        "find" => {
+            let board_id = args.first().ok_or_else(|| {
+                err_json("missing <board_id>", raw, "srv apps find <board_id>", "srv apps find b_xxx")
+            })?;
+            let pool = store
+                .board_pool(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find <board_id>", "srv apps find b_xxx"))?;
+            let app = pool
+                .srv_app_by_id(board_id)
+                .await
+                .map_err(|e| err_json(&e.to_string(), raw, "srv apps find <board_id>", "srv apps find b_xxx"))?;
+            match app {
+                Some(a) => Ok(json!({
+                    "status": "ok",
+                    "board_id": a.board_id,
+                    "title": a.title,
+                    "owned_by": a.owner_key,
+                    "hint": format!("retry with --session {}", a.owner_key),
+                })),
+                None => Err(err_json(
+                    &format!("board {board_id} not found"),
+                    raw,
+                    "srv apps find <board_id>",
+                    "srv apps find b_xxx",
+                )),
+            }
+        }
         "create" => {
             let title = joined_flag(args, "--title").unwrap_or_else(|| "Untitled".to_string());
             let schema = joined_flag(args, "--json");
@@ -849,12 +887,12 @@ async fn cmd_apps(store: &SessionStore, sid: &str, verb: &str, args: &[&String],
                         err_json("missing --action '<json>'", raw, "srv apps jobs <board_id> add", "srv apps jobs <board_id> add --action '{\"type\":\"poll\",\"url\":\"https://api.example.com/x\",\"path\":\"$.data\"}'")
                     })?;
                     require_board(store, board_id, sid, raw).await?;
-                    let id = store
+                    let (id, next_run_at) = store
                         .system()
                         .srv_job_add(board_id, &name, &schedule, &action)
                         .await
                         .map_err(|e| err_json(&e.to_string(), raw, "srv apps jobs add", "srv apps jobs <board_id> add"))?;
-                    Ok(json!({ "status": "ok", "job_id": id, "schedule": schedule, "next_run_at": None::<String> }))
+                    Ok(json!({ "status": "ok", "job_id": id, "schedule": schedule, "next_run_at": next_run_at }))
                 }
                 "list" => {
                     require_board(store, board_id, sid, raw).await?;

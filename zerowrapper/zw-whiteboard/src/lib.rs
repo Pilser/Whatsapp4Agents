@@ -9,6 +9,8 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 
+use zw_db::whiteboard::LOCK_TTL_SECS;
+
 use crate::monitor::MonitorCore;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -108,6 +110,9 @@ impl WhiteboardHandle {
                 };
                 for sid in sessions {
                     if let Some(store) = &db {
+                        if let Ok(pool) = store.session(&sid).await {
+                            let _ = pool.wb_reap_stale_locks(LOCK_TTL_SECS).await;
+                        }
                         poll_with_db(store, &dir, &cache, &state, &tx, &sid).await;
                     } else {
                         poll_without_db(&dir, &cache, &state, &tx, &sid).await;

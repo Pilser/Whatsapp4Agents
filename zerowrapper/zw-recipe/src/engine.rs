@@ -267,7 +267,7 @@ impl<'a> Engine<'a> {
             .or_else(|| map.get("schedule").and_then(|s| s.as_str()))
             .ok_or_else(|| anyhow::anyhow!("$schedule needs \"at\" (cron or @every)"))?;
         let action_json = map.get("action").cloned().unwrap_or(Value::Null);
-        let _ = self.db.srv_job_add("", name, at, &serde_json::to_string(&action_json)?).await?;
+        self.db.srv_job_add("", name, at, &serde_json::to_string(&action_json)?).await?;
         Ok(())
     }
 

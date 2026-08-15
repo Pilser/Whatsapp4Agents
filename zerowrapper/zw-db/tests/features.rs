@@ -440,10 +440,10 @@ async fn jobs_lifecycle_add_list_due_reschedule_mark_remove() {
     let (pool, dir) = pool().await;
     let board = pool.srv_app_create("owner", "t", None, true, None).await.unwrap();
 
-    let id1 = pool.srv_job_add(&board, "every-1s", "@every 1s", r#"{"type":"http","url":"https://example.com/x"}"#).await.unwrap();
+    let (id1, _) = pool.srv_job_add(&board, "every-1s", "@every 1s", r#"{"type":"http","url":"https://example.com/x"}"#).await.unwrap();
     assert!(id1 > 0);
-    let id2 = pool.srv_job_add(&board, "far-future", "@every 100000d", r#"{"type":"poll","url":"https://api.example.com/x","path":"$.data"}"#).await.unwrap();
-    let id3 = pool.srv_job_add(&board, "daily", "30 9 1 1 *", r#"{"type":"http","url":"https://example.com/y"}"#).await.unwrap();
+    let (id2, _) = pool.srv_job_add(&board, "far-future", "@every 100000d", r#"{"type":"poll","url":"https://api.example.com/x","path":"$.data"}"#).await.unwrap();
+    let (id3, _) = pool.srv_job_add(&board, "daily", "30 9 1 1 *", r#"{"type":"http","url":"https://example.com/y"}"#).await.unwrap();
 
     let err = pool.srv_job_add(&board, "bad", "not-a-cron", "{}").await;
     assert!(err.is_err(), "invalid schedule must be rejected");

@@ -91,7 +91,7 @@ async fn read_job(rows: &mut turso::Rows) -> anyhow::Result<Option<SrvJob>> {
 }
 
 impl DbPool {
-    pub async fn srv_job_add(&self, board_id: &str, name: &str, schedule: &str, action: &str) -> anyhow::Result<i64> {
+    pub async fn srv_job_add(&self, board_id: &str, name: &str, schedule: &str, action: &str) -> anyhow::Result<(i64, String)> {
         let now = fmt_iso(chrono::Utc::now().naive_utc());
         let next = match next_run(schedule, chrono::Utc::now().naive_utc()) {
             Some(dt) => fmt_iso(dt),
@@ -107,7 +107,7 @@ impl DbPool {
              VALUES ('{b}', '{n}', '{sch}', '{a}', '{next}', '{now}')"
         );
         conn.execute(&sql, Params::Positional(vec![])).await?;
-        Ok(conn.last_insert_rowid())
+        Ok((conn.last_insert_rowid(), next))
     }
 
     pub async fn srv_job_list(&self, board_id: Option<&str>) -> anyhow::Result<Vec<SrvJob>> {
