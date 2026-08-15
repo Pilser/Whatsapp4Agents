@@ -13,4 +13,5 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 zw-whiteboard = { path = "../zw-whiteboard" }
 zw-db = { path = "../zw-db" }
+zw-recipe = { path = "../zw-recipe" }
 zw-materials = { path = "../zw-materials" }

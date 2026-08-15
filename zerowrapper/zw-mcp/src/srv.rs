@@ -971,6 +971,7 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                 .srv_record_insert(board_id, &payload, writer.as_deref(), has_flag(rest, "--upsert"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records submit", "srv records submit <board_id> <json>"))?;
+            zw_recipe::run_recipes_for_record(&pool, board_id, "created", seq, &payload, writer.as_deref()).await;
             Ok(json!({ "status": "ok", "seq": seq }))
         }
         "bulk" => {
@@ -1012,6 +1013,9 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                 .srv_record_bulk_insert(&board_id, &records, writer.as_deref(), has_flag(rest, "--upsert"))
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records bulk", "srv records bulk <board_id> '<json array>'"))?;
+            for (record, seq) in records.iter().zip(&seqs) {
+                zw_recipe::run_recipes_for_record(&pool, board_id, "created", *seq, record, writer.as_deref()).await;
+            }
             Ok(json!({ "status": "ok", "inserted": seqs.len(), "seqs": seqs }))
         }
         "list" => {
@@ -1065,6 +1069,7 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
             pool.srv_record_set(board_id, seq, &payload, writer.as_deref())
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records update", "srv records update <board_id> <seq> <json>"))?;
+            zw_recipe::run_recipes_for_record(&pool, board_id, "updated", seq, &payload, writer.as_deref()).await;
             Ok(json!({ "status": "ok", "seq": seq }))
         }
         "patch" => {
@@ -1085,6 +1090,7 @@ async fn cmd_records(store: &SessionStore, sid: &str, verb: &str, args: &[&Strin
                 .srv_record_patch(board_id, seq, &ops)
                 .await
                 .map_err(|e| err_json(&e.to_string(), raw, "srv records patch", "srv records patch <board_id> <seq> <ops>"))?;
+            zw_recipe::run_recipes_for_record(&pool, board_id, "updated", seq, &merged, None).await;
             Ok(json!({ "status": "ok", "seq": seq, "payload": merged }))
         }
         "query" => {

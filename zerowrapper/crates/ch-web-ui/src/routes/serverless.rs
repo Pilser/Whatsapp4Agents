@@ -1307,61 +1307,11 @@ async fn dispatch_recipes(
     seq: i64,
     record: Option<&zw_db::serverless::SrvRecord>,
 ) {
-    let event_kind = match kind {
-        "created" => zw_recipe::EventKind::Created,
-        "updated" => zw_recipe::EventKind::Updated,
-        "deleted" => zw_recipe::EventKind::Deleted,
-        _ => return,
-    };
-    let recipes = match pool.srv_recipe_list(board_id).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!("dispatch_recipes: list error: {}", e);
-            return;
-        }
-    };
-    let payload = record.map(|r| r.payload.clone()).unwrap_or_else(|| serde_json::json!({}));
+    let payload = record
+        .map(|r| r.payload.clone())
+        .unwrap_or_else(|| serde_json::json!({}));
     let writer = record.and_then(|r| r.writer.clone());
-    let mut secrets = zw_recipe::Secrets::new();
-    if let Ok(map) = pool.srv_secrets_map(board_id).await {
-        for (name, value) in map {
-            secrets.insert(&name, &value);
-        }
-    }
-    let engine = zw_recipe::Engine { db: pool };
-    for sr in recipes {
-        let Some(recipe) = to_recipe(&sr) else { continue };
-        if !matches!(recipe.event_kind(), Some(k) if k == event_kind) {
-            continue;
-        }
-        let ctx = zw_recipe::EventContext {
-            kind: event_kind,
-            board_id: board_id.to_string(),
-            seq: Some(seq),
-            payload: payload.clone(),
-            writer: writer.clone(),
-            cron_name: None,
-        };
-        let outcome = engine.run_recipe(&recipe, &secrets, &ctx, false).await;
-        if !outcome.report.logs.is_empty() {
-            tracing::debug!("dispatch_recipes: recipe {} logs: {:?}", recipe.name, outcome.report.logs);
-        }
-    }
-}
-
-fn to_recipe(sr: &zw_db::recipes::SrvRecipe) -> Option<zw_recipe::Recipe> {
-    let actions = match sr.actions_json.as_array() {
-        Some(arr) => arr.clone(),
-        None => return None,
-    };
-    Some(zw_recipe::Recipe {
-        name: sr.name.clone(),
-        when: sr.when_json.clone(),
-        match_json: sr.match_json.clone(),
-        enabled: sr.enabled,
-        dedup_on: sr.dedup_on.clone(),
-        actions,
-    })
+    zw_recipe::run_recipes_for_record(pool, board_id, kind, seq, &payload, writer.as_deref()).await;
 }
 
 async fn dispatch_inbound(pool: &std::sync::Arc<zw_db::DbPool>, board_id: &str, payload: &serde_json::Value) {
@@ -1380,7 +1330,7 @@ async fn dispatch_inbound(pool: &std::sync::Arc<zw_db::DbPool>, board_id: &str, 
     }
     let engine = zw_recipe::Engine { db: pool };
     for sr in recipes {
-        let Some(recipe) = to_recipe(&sr) else { continue };
+        let Some(recipe) = zw_recipe::recipe_from_srv(&sr) else { continue };
         if !matches!(recipe.event_kind(), Some(zw_recipe::EventKind::Inbound)) {
             continue;
         }

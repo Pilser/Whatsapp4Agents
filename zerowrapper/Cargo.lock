@@ -4967,6 +4967,7 @@ dependencies = [
  "zw-core",
  "zw-db",
  "zw-materials",
+ "zw-recipe",
  "zw-whiteboard",
 ]
 
