@@ -25,6 +25,7 @@ pub fn build_router(ctx: AppContext) -> Router {
         .app_context(ctx)
         .assets(load_assets())
         .layer(TowerLayer::new(RoutPath::new("/api"), cors))
+        .layer(TowerLayer::new(RoutPath::new("/"), crate::cache::NoStoreHtmlLayer))
         .discover()
         .build()
 }

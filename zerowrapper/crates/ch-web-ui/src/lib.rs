@@ -1,5 +1,6 @@
 pub mod app;
 pub mod assets;
+pub mod cache;
 pub mod config;
 pub mod context;
 pub mod routes;
