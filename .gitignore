@@ -38,5 +38,8 @@ waos/**/dist/
 zerowrapper/target/
 zerowrapper/**/node_modules/
 zerowrapper/**/dist/
+# Deploy artifacts (binary + bundled assets) are built locally, not tracked
+zerowrapper/deploy/zw
+zerowrapper/deploy/assets/
 !docs/
 !docs/**

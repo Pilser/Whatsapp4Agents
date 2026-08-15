@@ -28,9 +28,6 @@ pub struct WebChannelConfig {
     /// CORS allowed origins
     #[serde(default = "default_origins")]
     pub allowed_origins: Vec<String>,
-    /// Path to built frontend dist folder (optional)
-    #[serde(default)]
-    pub dist_path: Option<PathBuf>,
     /// Topcoat UI bind address, e.g. "0.0.0.0:9091". Defaults to bind port + 1.
     #[serde(default)]
     pub ui_bind: Option<String>,
@@ -99,7 +96,6 @@ impl Default for WrapperConfig {
                 agent: String::new(),
                 bind: String::new(),
                 allowed_origins: vec![],
-                dist_path: None,
                 ui_bind: None,
                 accounts: HashMap::new(),
                 upload_dir: default_upload_dir(),
@@ -218,9 +214,6 @@ impl WrapperConfig {
                                 if !origins.is_empty() {
                                     base.ch_web.allowed_origins = origins;
                                 }
-                            }
-                            ("dist_path", toml::Value::String(v)) => {
-                                base.ch_web.dist_path = Some(PathBuf::from(v));
                             }
                             ("upload_dir", toml::Value::String(v)) => {
                                 base.ch_web.upload_dir = PathBuf::from(v);

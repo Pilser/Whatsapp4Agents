@@ -7,6 +7,7 @@ use zw_expr::path::parse_path;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ActionKind {
     Compute,
+    Set,
     Copy,
     Move,
     Format,
@@ -29,6 +30,7 @@ impl ActionKind {
     pub fn parse(key: &str) -> Option<ActionKind> {
         Some(match key {
             "$compute" => ActionKind::Compute,
+            "$set" => ActionKind::Set,
             "$copy" => ActionKind::Copy,
             "$move" => ActionKind::Move,
             "$format" => ActionKind::Format,
@@ -312,6 +314,14 @@ pub fn apply_action(
             }
             report.push(kind, "computed fields");
         }
+        ActionKind::Set => {
+            let resolved = substitute_event(secrets, ctx, &serde_json::Value::Object(map.clone()))?;
+            let resolved_map = resolved.as_object().ok_or_else(|| anyhow::anyhow!("$set must be an object"))?;
+            for (field, value) in resolved_map {
+                set_at(payload, field, value.clone())?;
+            }
+            report.push(kind, "set fields");
+        }
         ActionKind::Copy | ActionKind::Move => {
             let from = path_str(map.get("from").unwrap_or(&Value::Null))?;
             let to = path_str(map.get("to").unwrap_or(&Value::Null))?;
@@ -435,6 +445,7 @@ pub fn apply_action(
 fn name_for(kind: &ActionKind) -> &'static str {
     match kind {
         ActionKind::Compute => "$compute",
+        ActionKind::Set => "$set",
         ActionKind::Copy => "$copy",
         ActionKind::Move => "$move",
         ActionKind::Format => "$format",

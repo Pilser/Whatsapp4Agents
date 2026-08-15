@@ -58,7 +58,11 @@ impl crate::TemplateStore {
         let ver = 1;
         let sid = zw_db::templates::version_sid(tpl, ver);
         let pool = self.templates.session(&sid).await?;
-        pool.srv_app_create_with_id(&sid, &sid, name, None, true, None).await?;
+        if pool.srv_app_by_id(&sid).await?.is_none() {
+            pool.srv_app_create_with_id(&sid, &sid, name, None, true, None).await?;
+        } else {
+            pool.srv_app_update(&sid, &sid, Some(name), None, Some(true), None).await?;
+        }
         self.templates.register_board(&sid, &sid, &sid).await?;
         let manifest = manifest::Manifest {
             template_id: tpl.to_string(),

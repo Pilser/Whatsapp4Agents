@@ -45,6 +45,10 @@ impl SessionStore {
         Ok(pool)
     }
 
+    pub async fn discard(&self, sid: &str) {
+        self.open.lock().await.remove(sid);
+    }
+
     pub async fn session_id_for_board(&self, board_id: &str) -> anyhow::Result<String> {
         let conn = self.system.conn().await;
         let mut rows = conn

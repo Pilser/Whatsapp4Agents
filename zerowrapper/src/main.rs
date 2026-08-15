@@ -121,9 +121,9 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "./landing.yaml".to_string());
     let settings_path = std::env::var("ZEROWRAPPER_SETTINGS_YAML")
         .unwrap_or_else(|_| "./sitesettings.yaml".to_string());
-    let config_dir = std::env::var("TOPCOAT_ASSETS_DIR")
+    let config_dir = std::env::var("ZEROWRAPPER_CONFIG_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("assets"));
+        .unwrap_or_else(|_| std::path::PathBuf::from("config"));
     let settings = ch_web_ui::config::load_site_settings(&settings_path)
         .unwrap_or_else(|e| {
             tracing::warn!("Failed to load {}: {e}", settings_path);

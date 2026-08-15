@@ -169,6 +169,7 @@ impl crate::TemplateStore {
         if let Ok(vers) = self.versions(tpl).await {
             for ver in vers {
                 let sid = zw_db::templates::version_sid(tpl, ver);
+                self.templates.discard(&sid).await;
                 let _ = self.templates.unregister_board(&sid).await;
             }
         }
@@ -179,6 +180,7 @@ impl crate::TemplateStore {
                 let entry = entry?;
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with(&format!("{tpl}@")) {
+                    self.templates.discard(&name).await;
                     snapshot::remove_tree(&entry.path())?;
                 }
             }

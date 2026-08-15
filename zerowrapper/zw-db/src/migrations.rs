@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS wb_keys (
     key_hash    TEXT NOT NULL,
     role        TEXT NOT NULL DEFAULT 'reader',
     writer      TEXT,
+    scope       TEXT,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     revoked_at  TEXT
 );
@@ -201,6 +202,7 @@ pub const SYSTEM_MIGRATIONS: &[&str] = &[
     "ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT '';",
     "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'public';",
     "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT '';",
+    "ALTER TABLE wb_keys ADD COLUMN scope TEXT;",
 ];
 
 pub const SESSION_MIGRATIONS: &[&str] = &[
@@ -216,5 +218,4 @@ pub const SESSION_MIGRATIONS: &[&str] = &[
     "ALTER TABLE wb_apps ADD COLUMN validate_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN redact_json TEXT;",
     "ALTER TABLE wb_apps ADD COLUMN webhook_secret TEXT;",
-    "ALTER TABLE wb_keys ADD COLUMN scope TEXT;",
 ];

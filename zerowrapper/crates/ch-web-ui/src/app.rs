@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::path::Path;
 use tokio::net::TcpListener;
-use topcoat::router::{Router, RouterBuilderDiscoverExt};
+use topcoat::router::{Router, Path as RoutPath, RouterBuilderDiscoverExt, tower::TowerLayer};
 use topcoat::asset::{AssetBundle, RouterBuilderAssetExt};
 
 use crate::context::AppContext;
@@ -20,9 +20,11 @@ fn load_assets() -> AssetBundle {
 }
 
 pub fn build_router(ctx: AppContext) -> Router {
+    let cors = tower_http::cors::CorsLayer::permissive();
     Router::builder()
         .app_context(ctx)
         .assets(load_assets())
+        .layer(TowerLayer::new(RoutPath::new("/api"), cors))
         .discover()
         .build()
 }
