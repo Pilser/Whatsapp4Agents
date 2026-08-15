@@ -159,6 +159,18 @@ impl WhiteboardHandle {
                     .map(|p| p.title.clone())
                     .unwrap_or_default();
                 let _ = pool.wb_write_page(sid, active, &title, &raw).await;
+                // Bug A: a page that is already public must be re-snapshotted on close,
+                // otherwise /w/<slug> keeps serving the stale pre-edit snapshot forever.
+                if let Ok(Some(slug)) = pool.wb_public_slug(sid, active).await {
+                    let pins = pool
+                        .wb_public_snapshot(&slug)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(|s| s.pins)
+                        .unwrap_or_else(|| "[]".to_string());
+                    let _ = pool.wb_set_public_content(&slug, &raw, &pins).await;
+                }
             }
         }
         let path = session_path(&self.dir, sid);
